@@ -1,5 +1,8 @@
 # Ruby + Async
 
+Based on [ruby-async-cicloid](../ruby-async-cicloid) (PR #71), the best Ruby entry. What changed against it,
+and how it was measured, is under [Changes against ruby-async-cicloid](#changes-against-ruby-async-cicloid).
+
 | | |
 |---|---|
 | Language | Ruby 4.0.7 with YJIT, built from source with jemalloc and `-march=native` |
@@ -139,6 +142,8 @@ version keeps the Async reactor and replaces the HTTP server.
 - **Direct instead of Nginx.** On one core, Nginx's CPU comes out of Ruby's budget, and the provided
   `nginx.conf` caps out near 16k connections. Responses switch to `Connection: close` only within 256
   descriptors of the process's file limit, so clients aren't forced to reconnect under normal load.
+  Within 192 descriptors below that budget, a new connection is served once with `Connection: close`
+  straight from `accept` and never enters the epoll set.
 - **TCP_NODELAY is set on the listener** and inherited by accepted sockets on Linux, so there is
   no `setsockopt` per connection.
 
@@ -235,36 +240,39 @@ Test suite: 42/42 on x86_64.
   experimental (it prints a warning at startup). On an epoll-only kernel it still works, unbatched.
 - The parser covers what this API needs: no chunked request bodies and no `Expect: 100-continue`.
 
-## stack7 (local-bench variant note)
+## Changes against ruby-async-cicloid
 
-stack7 = stack5 (v01 feed-no-sorter, v04 group-commit deferred flush, v05 http/app micro trims, v06
-worker-pool LIFO/shrink, v09 mmap_size=0) + v10 churn shed-at-accept, 3-way merged into http.rb with
-the submission as base. Within 192 descriptors of the budget `accept_loop` marks a newcomer SHED
-(`socket.timeout = 10`), hands it to a worker the way `dispatch` does (pop `@idle`, grow the pool, else
-`@backlog`; v10's `@ready` queue no longer exists) and `drain` answers it once with `Connection: close`;
-`respond` keeps stack5's single interpolation and passes v10's `last` flag (MSG_MORE, FIN on the last segment).
+The sections above from "Results on a 1-vCPU test VM" to "Trade-offs" are cicloid's measurements of the
+original tree. This tree changes `app.rb`, `http.rb` and `server.rb` only; the toolchain, gems, schema
+and build are unchanged.
+
+- `/feed` without the `group_concat` sorter, checked at boot (see "The feed aggregates without a sorter").
+- Group commit as one synchronous deferred flush, and likes as one `INSERT ... VALUES` guarded by the
+  foreign key.
+- The byte-wise header walker and one interpolation per response.
+- The LIFO worker stack with direct scheduler pushes and the once-a-second idle trim.
+- `mmap_size=0` with a 64 MiB page cache.
+- Shed at accept: near the descriptor budget a newcomer is answered once with `Connection: close` and
+  closed, never parked in epoll. A connection's last response is sent with `MSG_MORE` and followed by
+  `shutdown(SHUT_WR)`, so the FIN rides on the held segment and a later `close` with unread input
+  cannot reset the response away.
+
+Measured locally on one pinned vCPU with 2 GB, both images under identical load at the same time and
+each comparison repeated with the seats swapped. CPU per request is server `utime+stime` over requests:
+
+| Users | ruby-async-cicloid | This tree | CPU per request |
+|---|---|---|---|
+| 20,000 | pass | pass | -23.8 % |
+| 80,000 | pass | pass | -27.7 % |
+| 187,500 | fail, p95 1.6 s | pass, p95 19 ms, p99 43 ms | -46.7 % (original saturated) |
+| 230,000 | not run | pass, p99 85 ms | |
+| 280,000 | not run | fail, p99 3.7 s | |
+
+The original passes 150,000 and fails 187,500 locally; this tree passes 230,000 and fails 280,000. The
+local harness is a stand-in for the droplet, so these are relative numbers, not a score. The 20,000
+pair ran this code without the `shutdown` line, whose path never runs at that load. `test/test.sh`
+passes 42/42.
 
 ## License
 
 MIT, under the repo's [license](../../LICENSE).
-
-## final2
-
-final2 is stack7 promoted: the five stack5 edits (v01 feed-no-sorter, v04 group-commit deferred
-flush, v05 http/app micro trims, v06 worker-pool LIFO/shrink, v09 mmap_size=0) plus v10 churn
-shed-at-accept (http.rb only: newcomers that arrive over the descriptor budget are answered once
-with `Connection: close` and closed at accept time instead of being parked and closed after serving).
-Phase 3 numbers vs stack5, sign-corrected means over swapped pairs: 20k -1.2 % us/req (pairs
-stack7-p1/p2), 80k -4.3 % (pairs stack7-c1r/c2; -7.3 % and -1.4 % per seat), both images pass every
-clean run, shed path exercised at 80k (peak_connections 65.4-66.3k >= fd budget 65,279); stack7 makes
-~1.5 % more connects. 150k/187.5k pairs vs stack5 were loadgen-bound or skipped for disk. Keep rule
-applied: promote only when the sign-corrected mean is <= 0 at every load tested and there is no pair
-where stack5 passes and the variant fails. test/test.sh 42/42.
-Image: final2 = stack7 + `socket.shutdown(Socket::SHUT_WR)` right after the MSG_MORE send of a connection's
-last response. With unread input still queued on the server socket (oversized 413/431/400 rejects, pipelined
-requests) a bare `close()` sends RST and discards the corked segment, so the client sees only ECONNRESET; the
-review measured 413 delivered 20/20 on stack5 against 8/20 and 15/20 on stack7. `shutdown` raises the FIN
-while the segment is still in the send queue, so the one-segment saving stays and the response is delivered.
-Image id: 6f312e85c53e (sha256:6f312e85c53e03c473734c215989ab83eca6e9fe80cb41f63975c9d47bc76649);
-tdsc-cicloid:stack7 stays e77fcbf98c89. The earlier final2-* result files were produced by the stack7
-image under the final2 tag.
