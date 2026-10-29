@@ -29,17 +29,43 @@ version keeps the Async reactor and replaces the HTTP server.
 
 - **Idle connections own no fiber.** An idle keep-alive connection sits in a kernel epoll set and
   owns no Ruby fiber. Each connection is registered once, edge-triggered, so there is no `epoll_ctl`
-  per request. One Async task waits on that epoll descriptor through the reactor. A pool of 256
-  worker fibers (it grows, up to 4096, only when every worker is busy) reads each ready connection,
-  answers every complete request in its buffer in order, and writes each response with one `write`.
+  per request. One Async task waits on that epoll descriptor through the reactor. A pool of 64
+  resident worker fibers (it grows, up to 4096, only when every worker is busy, and is trimmed back
+  once a second) reads each ready connection, answers every complete request in its buffer in
+  order, and writes each response with one `write`.
   Memory is about 3–5 KB per connection (about 130 MB at 40k), and GC drops from about 4 s to about
   0.15 s per minute.
+- **Worker hand-off: a LIFO stack and direct scheduler pushes.** Idle workers used to block on a
+  `Thread::Queue#pop` (the fiber scheduler's `block`/`unblock` under the hood) and were woken in
+  FIFO order. Now an idle worker parks itself on a plain array used as a stack and transfers back
+  to the reactor; the dispatcher pops the most recently parked worker, whose stack pages are still
+  cache-warm, sets its descriptor and pushes its fiber straight onto the reactor's ready queue
+  (`Fiber.scheduler.push`). Every ready descriptor of an epoll pass gets its own push in that pass,
+  so all of a pass's workers are runnable together and the group-commit batch is the same as
+  before. When no worker is idle the pool grows (to at most 4096; past that, descriptors wait in a
+  backlog that returning workers drain first). Once a second, the longest-idle workers beyond the
+  64 resident ones, the bottom of the stack, are woken without a descriptor and exit, at most 32
+  per tick, so a burst's pool drains over a few seconds instead of thrashing, and a suspended
+  fiber that is no longer needed stops being a root for every minor GC to mark (about 1.2 µs per
+  suspended fiber per minor GC). Every 10 s the server prints one `pool ...` line on stderr with
+  the pool size, idle and backlogged counts, open connections, group commits and GC counters.
+  Expected effect: small. The hand-off itself is about 0.3 µs per request cheaper than
+  `Thread::Queue` (0.6 vs 0.8–1.0 µs per job in a micro-benchmark), the GC and locality effects
+  are below 1% of CPU, and RSS at 80k users drops by 1–2%.
 - **A minimal HTTP/1.1 parser.** It reads the request line and the four headers the API uses:
   `Content-Length`, `Transfer-Encoding`, `Connection` and `Authorization`. It supports keep-alive,
   pipelining, partial reads, HTTP/1.0 and `Connection: close`. Chunked request bodies get a 411.
-  Response heads are prebuilt frozen strings. The header regex takes each value greedily and trims
-  trailing blanks afterwards: the lazy form with a lookahead backtracked along the 200-byte bearer
-  token and cost 5.7 µs per POST head against 2.9 µs now.
+  Response heads are prebuilt frozen strings, and each response is assembled with one string
+  interpolation (`String.new(capacity:)` cost two extra allocations per response). The header
+  lines are walked byte by byte with `byteindex`: a name is matched by length and first letter
+  before anything is sliced, so a GET carrying `Host`, `User-Agent` and `Accept-Encoding` allocates
+  nothing for its headers, and a POST head with a 200-byte bearer token takes about 1 µs against
+  6 µs for the regex scan it replaces (18 objects down to 9). Names are case-insensitive, blanks
+  before the colon and around the value are ignored, and lines without a colon are skipped. The
+  colon search is memoized across lines, so a head made of colon-less lines in front of a large
+  body scans the buffer once. A bare CR or LF inside a header line is now rejected (the whole line
+  is the value, so such a `Content-Length` gets a 400) where the regex silently cut the value
+  short; that is the RFC 9112 reading, and no HTTP client sends one.
 - **YJIT is warm before the first request.** `start.sh` sets `--yjit-call-threshold=5` (default 30),
   and at startup the server runs the feed, a single post, a JWT verification with a body parse, and a
   like with an invalid id 50 times each through its own parser and app over a socket pair, so the
@@ -57,13 +83,33 @@ version keeps the Async reactor and replaces the HTTP server.
   The single-post query binds its id as `p.id=+?`: with a plain `?` in that join, SQLite treated the
   plan as depending on the bound value and recompiled the statement on every request. The `+` keeps
   the same plan and output and halves that query's time (14 to 7 µs).
-- **Group commit.** The first write in a reactor pass opens `BEGIN IMMEDIATE`, every write in that pass
-  joins the transaction, and one `COMMIT` runs on the next pass. No write response goes out before its
-  `COMMIT` returns, and reads that ran while a batch was open wait for it too. That gives one WAL
-  append per batch instead of one per write.
+- **The feed aggregates without a sorter.** `/feed` is `group_concat` over a 20-row subquery that
+  already runs `ORDER BY created_at DESC, id DESC LIMIT 20` as a co-routine on
+  `posts_created_at_id_idx`. The earlier text repeated that `ORDER BY` inside `group_concat`, and
+  SQLite served it with a temp b-tree (`USE TEMP B-TREE FOR group_concat(ORDER BY)`): every feed
+  re-sorted 20 rows it had just received in order. Without it the plan is the same co-routine, 59
+  VDBE opcodes instead of 71, and the feed statement costs about 23 µs instead of 32 (feeds are 46%
+  of requests). The bytes are identical: ties on `created_at` are still broken by `id DESC` inside
+  the subquery, and an empty table still yields `{"posts":[]}`. SQLite documents `group_concat`
+  order as arbitrary without `ORDER BY`, so this relies on the co-routine delivery order of the
+  pinned SQLite 3.54.0 build and is enforced at boot: `Store#initialize` runs the new and the old
+  (sorted) text once, compares the documents and checks `EXPLAIN QUERY PLAN` for a temp b-tree; if
+  either check fails it warns and prepares the sorted text instead. Both boot documents are
+  discarded; nothing is cached across requests.
+- **Group commit as one deferred flush.** A write only queues its statement and yields once, so every
+  write that is ready in the same reactor pass queues too. The first writer back from its yield runs
+  the whole queue inside one `BEGIN IMMEDIATE ... COMMIT`, synchronously, and each write answers only
+  after that `COMMIT` has returned. That gives one WAL append per batch instead of one per write, with
+  no task, fiber or promise per batch. No transaction is ever open across a fiber switch, so reads
+  never see uncommitted rows and never wait for a batch.
 - **Pragmas**: `locking_mode=EXCLUSIVE`, so the WAL index lives in heap memory rather than the `-shm`
   file; `journal_mode=WAL`; `synchronous=NORMAL` (rule 6); `wal_autocheckpoint=0`, with a passive
-  checkpoint every second, off the commit path. Every statement is reset as soon as its row has been read, because a statement left mid-step holds a read transaction and blocks checkpoints. Before that fix the WAL grew past 300 MB under load, and WAL lookups (`walFindFrame`) took 30% of the CPU; 1 GiB `mmap_size`; 64 MiB page cache.
+  checkpoint every second, off the commit path. Every statement is reset as soon as its row has been read, because a statement left mid-step holds a read transaction and blocks checkpoints. Before that fix the WAL grew past 300 MB under load, and WAL lookups (`walFindFrame`) took 30% of the CPU. `mmap_size=0` with a 64 MiB page cache (`cache_size=-65536`): pages are served from
+  SQLite's own page cache rather than a 1 GiB `mmap`. A memory-mapped page is not retained in the page
+  cache, so every acquisition re-parses it (`btreeInitPage`) and looks it up in the WAL index again,
+  while a page-cache hit returns the already-parsed page. The load test's working set (hot feed pages
+  plus the `likes` and `posts` index leaves it touches, ~40 MB) fits the cache, so nothing is evicted,
+  and RSS is lower than with the mapping because only the working set is held.
 - **SQLite compiled for this workload.** It's a static library built with sqlite.org's recommended
   options (`DQS=0`, `DEFAULT_MEMSTATUS=0`, `OMIT_DEPRECATED`, `OMIT_SHARED_CACHE`, `USE_ALLOCA`, and so
   on). It's then profile-guided: `sqlite_train.c` runs the server's own statements in the load test's
@@ -71,12 +117,25 @@ version keeps the Async reactor and replaces the HTTP server.
   faster.
 - **One thread, and SQLite never releases the GVL.** Every query is an index lookup that takes
   microseconds, so releasing and reacquiring the GVL would cost more than it saves.
-- **JWT verified on every request**, with no caching (rule 5). libsodium's one-shot HMAC-SHA256 takes
-  1.6 µs, compared with 3.5 µs through OpenSSL's HMAC in Ruby, and signatures are compared in
-  constant time. The standard `{"alg":"HS256","typ":"JWT"}` header is compared as a string, and any
-  other header is parsed and must say `HS256`. `exp`, `nbf`, `sub` and `username` are checked.
-- **Likes in one statement**: `INSERT ... SELECT ... WHERE EXISTS (post) ON CONFLICT DO NOTHING`. A
-  post-existence check runs only when nothing was inserted, to tell "already liked" from "no such post".
+- **JWT verified on every request**, with no caching (rule 5). The keyed HMAC-SHA256 state (the
+  secret's inner and outer pads, 208 bytes) is computed once at startup from `JWT_SECRET`; each
+  verification copies it and runs libsodium's `update` and `final` over the signing input, 1.1 µs
+  against 1.6 µs for the one-shot call (3.5 µs through OpenSSL's HMAC in Ruby). Every token's MAC
+  is computed and compared in constant time with `crypto_verify_32`. The token is checked once for
+  characters outside the base64url alphabet (`+`, `/`, `=`), and the strict decoder
+  (`unpack1("m0")`) rejects everything else the previous per-segment regex did, so the 43-character
+  signature always decodes to exactly 32 bytes. The standard `{"alg":"HS256","typ":"JWT"}` header
+  is compared as a string, and any other header is parsed and must say `HS256`. `exp`, `nbf`, `sub`
+  and `username` are checked.
+- **Trimming a post body skips the regex when it can.** Every character in JavaScript's
+  `String#trim` set is ASCII below 0x21 or a multibyte sequence, so a body whose first and last
+  bytes are printable ASCII has nothing to trim and the `gsub` (11.5 µs on a 500-character body) is
+  skipped. The single-post lookup also drops a redundant `reset`: extralite's `Query#bind` resets
+  the statement itself (the reset after the row is read stays, so no read transaction outlives it).
+- **Likes in one statement**: `INSERT ... VALUES ... ON CONFLICT DO NOTHING`; one changed row means
+  "liked", none means "already liked". The foreign key on `likes.post_id` (`foreign_keys=ON`) rejects a
+  like of a missing post, and only on that constraint error does a post-existence check run, to tell a
+  missing post (404) from a missing user (500).
 - **Direct instead of Nginx.** On one core, Nginx's CPU comes out of Ruby's budget, and the provided
   `nginx.conf` caps out near 16k connections. Responses switch to `Connection: close` only within 256
   descriptors of the process's file limit, so clients aren't forced to reconnect under normal load.
@@ -176,6 +235,36 @@ Test suite: 42/42 on x86_64.
   experimental (it prints a warning at startup). On an epoll-only kernel it still works, unbatched.
 - The parser covers what this API needs: no chunked request bodies and no `Expect: 100-continue`.
 
+## stack7 (local-bench variant note)
+
+stack7 = stack5 (v01 feed-no-sorter, v04 group-commit deferred flush, v05 http/app micro trims, v06
+worker-pool LIFO/shrink, v09 mmap_size=0) + v10 churn shed-at-accept, 3-way merged into http.rb with
+the submission as base. Within 192 descriptors of the budget `accept_loop` marks a newcomer SHED
+(`socket.timeout = 10`), hands it to a worker the way `dispatch` does (pop `@idle`, grow the pool, else
+`@backlog`; v10's `@ready` queue no longer exists) and `drain` answers it once with `Connection: close`;
+`respond` keeps stack5's single interpolation and passes v10's `last` flag (MSG_MORE, FIN on the last segment).
+
 ## License
 
 MIT, under the repo's [license](../../LICENSE).
+
+## final2
+
+final2 is stack7 promoted: the five stack5 edits (v01 feed-no-sorter, v04 group-commit deferred
+flush, v05 http/app micro trims, v06 worker-pool LIFO/shrink, v09 mmap_size=0) plus v10 churn
+shed-at-accept (http.rb only: newcomers that arrive over the descriptor budget are answered once
+with `Connection: close` and closed at accept time instead of being parked and closed after serving).
+Phase 3 numbers vs stack5, sign-corrected means over swapped pairs: 20k -1.2 % us/req (pairs
+stack7-p1/p2), 80k -4.3 % (pairs stack7-c1r/c2; -7.3 % and -1.4 % per seat), both images pass every
+clean run, shed path exercised at 80k (peak_connections 65.4-66.3k >= fd budget 65,279); stack7 makes
+~1.5 % more connects. 150k/187.5k pairs vs stack5 were loadgen-bound or skipped for disk. Keep rule
+applied: promote only when the sign-corrected mean is <= 0 at every load tested and there is no pair
+where stack5 passes and the variant fails. test/test.sh 42/42.
+Image: final2 = stack7 + `socket.shutdown(Socket::SHUT_WR)` right after the MSG_MORE send of a connection's
+last response. With unread input still queued on the server socket (oversized 413/431/400 rejects, pipelined
+requests) a bare `close()` sends RST and discards the corked segment, so the client sees only ECONNRESET; the
+review measured 413 delivered 20/20 on stack5 against 8/20 and 15/20 on stack7. `shutdown` raises the FIN
+while the segment is still in the send queue, so the one-segment saving stays and the response is delivered.
+Image id: 6f312e85c53e (sha256:6f312e85c53e03c473734c215989ab83eca6e9fe80cb41f63975c9d47bc76649);
+tdsc-cicloid:stack7 stays e77fcbf98c89. The earlier final2-* result files were produced by the stack7
+image under the final2 tag.

@@ -31,9 +31,15 @@ Process.warmup if Process.respond_to?(:warmup)
 
 Async do |task|
   task.async do
+    tick = 0
     loop do
       sleep 1
       store.checkpoint
+      server.trim_workers
+      tick += 1
+      next unless (tick % 10).zero?
+
+      $stderr.puts "pool #{server.stats} commits=#{store.commits} minor_gc=#{GC.stat(:minor_gc_count)} gc_ms=#{GC.stat(:time)}"
     end
   end
 
