@@ -1,0 +1,5 @@
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev curl jq openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /load
+COPY connection_load.c /load/
+RUN gcc -O3 -Wall -Wextra connection_load.c -lm -o connection-load
