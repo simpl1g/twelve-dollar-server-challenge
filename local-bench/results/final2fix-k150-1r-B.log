@@ -1,0 +1,10 @@
+server up after 2s
+{"name":"final2fix-k150-1r-B","image":"tdsc-cicloid:final2","users":150000,"seconds":300,"requests":4759760,"rps":15865.866999999998,"error_rate":0,"p50_ms":2.561,"p95_ms":23.931,"p99_ms":89.608,"event_loop_delay_ms":343.862,"peak_connections":70140,"connects":2879848,"retired_connections":2814757,"pass":true,"procs":3,"server_cpu_pct":51.7,"us_per_req":32.6,"server_peak_mem_mb":552}
+{"progress_seconds":240,"requests":1110733,"errors":0,"connections":21707,"connects":689766,"retired_connections":668059}
+{"progress_seconds":270,"requests":1269490,"errors":0,"connections":21677,"connects":779722,"retired_connections":758045}
+{"progress_seconds":300,"requests":1427991,"errors":0,"connections":21752,"connects":869703,"retired_connections":847964}
+pool workers=186 idle=112 backlog=0 open=65096 commits=112492 minor_gc=491 gc_ms=3864
+pool workers=337 idle=305 backlog=0 open=65087 commits=116640 minor_gc=507 gc_ms=4010
+pool workers=238 idle=168 backlog=0 open=65106 commits=120896 minor_gc=524 gc_ms=4157
+pool workers=321 idle=185 backlog=0 open=65142 commits=125056 minor_gc=541 gc_ms=4306
+pool workers=299 idle=191 backlog=0 open=65115 commits=129195 minor_gc=559 gc_ms=4460

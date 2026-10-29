@@ -1,0 +1,10 @@
+server up after 2s
+{"name":"ref-v06","image":"tdsc-cicloid:ref-v06","users":20000,"seconds":60,"requests":126783,"rps":2113.050,"error_rate":0,"p50_ms":0.852,"p95_ms":4.864,"p99_ms":17.618,"event_loop_delay_ms":60.754,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":1,"server_cpu_pct":12.1,"us_per_req":56.8,"server_peak_mem_mb":171}
+{"progress_seconds":30,"requests":21157,"errors":0,"connections":20000,"connects":20000,"retired_connections":0}
+{"progress_seconds":60,"requests":84584,"errors":0,"connections":20000,"connects":20000,"retired_connections":0}
+pool workers=64 idle=64 backlog=0 minor_gc=35 gc_ms=136
+pool workers=66 idle=66 backlog=0 minor_gc=42 gc_ms=156
+pool workers=64 idle=64 backlog=0 minor_gc=49 gc_ms=174
+pool workers=66 idle=66 backlog=0 minor_gc=55 gc_ms=194
+pool workers=64 idle=57 backlog=0 minor_gc=61 gc_ms=216
+Error response from daemon: No such container: tdsc-srv-ref-v06

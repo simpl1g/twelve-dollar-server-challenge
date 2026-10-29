@@ -1,0 +1,28 @@
+diff --git a/app.rb b/app.rb
+index 16920d847804f7d271d50453734da43c1c27399a..ba4de52229d6db0268572087c5c033627a879277 100644
+--- a/app.rb
++++ b/app.rb
+@@ -23,9 +23,12 @@ end
+ class Store
+   POST_JSON = "json_object('id',p.id,'body',p.body,'created_at',p.created_at,'author',u.username," \
+               "'like_count',(SELECT count(*) FROM likes l WHERE l.post_id=p.id))"
+-  FEED = "SELECT '{\"posts\":['||coalesce(group_concat(doc,',' ORDER BY created_at DESC,id DESC),'')||']}' " \
+-         "FROM (SELECT #{POST_JSON} AS doc,p.created_at,p.id FROM posts p JOIN users u ON u.id=p.user_id " \
++  FEED = "SELECT '{\"posts\":['||coalesce(group_concat(doc,','),'')||']}' " \
++         "FROM (SELECT #{POST_JSON} AS doc FROM posts p JOIN users u ON u.id=p.user_id " \
+          "ORDER BY p.created_at DESC,p.id DESC LIMIT 20)"
++  FEED_SORTED = "SELECT '{\"posts\":['||coalesce(group_concat(doc,',' ORDER BY created_at DESC,id DESC),'')||']}' " \
++                "FROM (SELECT #{POST_JSON} AS doc,p.created_at,p.id FROM posts p JOIN users u ON u.id=p.user_id " \
++                "ORDER BY p.created_at DESC,p.id DESC LIMIT 20)"
+   # `+?`, not `?`: with the join, SQLite's constant propagation makes the plan depend on the bound
+   # id, so every new id would recompile the statement (twice the cost of running it).
+   POST = "SELECT '{\"post\":'||#{POST_JSON}||'}' FROM posts p JOIN users u ON u.id=p.user_id WHERE p.id=+?"
+@@ -55,6 +58,8 @@ class Store
+     @ping = @db.prepare_splat("SELECT 1")
+     @batch = nil
+     @checkpoint_due = false
++    abort("feed plan drift") unless @db.query_single_splat(FEED) == @db.query_single_splat(FEED_SORTED) &&
++                                    @db.query("EXPLAIN QUERY PLAN #{FEED}").none? { |r| r.values.join.include?("TEMP B-TREE") }
+   end
+ 
+   # Every statement is reset as soon as its row is taken: a statement left mid-step keeps its read

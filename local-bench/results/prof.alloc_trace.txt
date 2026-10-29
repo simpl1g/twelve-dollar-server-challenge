@@ -1,0 +1,64 @@
+== GET /feed: 29.0 objects/request (24.0 attributed; the rest are C-internal or freed)
+     8.00  priority_heap.rb:119
+     3.00  http.rb:286
+     2.00  alloc_trace.rb:33
+     1.00  http.rb:287
+     1.00  app.rb:196
+     1.00  app.rb:63
+     1.00  http.rb:239
+     1.00  http.rb:233
+     1.00  http.rb:230
+     1.00  http.rb:226
+     1.00  http.rb:293
+     1.00  http.rb:174
+     1.00  alloc_trace.rb:32
+     1.00  alloc_trace.rb:51
+   classes: String=9.0, Array=9.0, IO::Buffer=4.0, Hash=2.0
+== GET /posts/:id: 31.0 objects/request (26.0 attributed; the rest are C-internal or freed)
+     8.00  priority_heap.rb:119
+     3.00  http.rb:286
+     2.00  app.rb:70
+     2.00  alloc_trace.rb:33
+     1.00  http.rb:287
+     1.00  app.rb:210
+     1.00  app.rb:208
+     1.00  http.rb:239
+     1.00  http.rb:233
+     1.00  http.rb:230
+     1.00  http.rb:226
+     1.00  http.rb:293
+     1.00  http.rb:174
+     1.00  alloc_trace.rb:32
+   classes: Array=10.0, String=10.0, IO::Buffer=4.0, Hash=2.0
+== POST like (new or repeat): 90.3 objects/request (80.3 attributed; the rest are C-internal or freed)
+    12.00  priority_heap.rb:119
+     9.00  http.rb:239
+     5.00  common.rb:869
+     3.00  app.rb:257
+     3.00  http.rb:286
+     3.00  task.rb:526
+     2.00  app.rb:325
+     2.00  <internal:pack>:38
+     2.00  app.rb:326
+     2.00  async.rb:27
+     2.00  app.rb:287
+     2.00  promise.rb:32
+     2.00  promise.rb:33
+     2.00  annotation.rb:15
+   classes: String=34.0, Array=21.0, Hash=7.0, IO::Buffer=4.0, Proc=3.0, Thread::ConditionVariable=2.0, Thread::Mutex=2.0, MatchData=2.0
+== POST /posts: 101.0 objects/request (90.0 attributed; the rest are C-internal or freed)
+    12.00  priority_heap.rb:119
+    12.00  http.rb:239
+     8.00  common.rb:869
+     3.00  task.rb:526
+     3.00  http.rb:286
+     2.00  task.rb:250
+     2.00  app.rb:287
+     2.00  alloc_trace.rb:33
+     2.00  <internal:pack>:38
+     2.00  app.rb:78
+     2.00  http.rb:240
+     2.00  http.rb:241
+     2.00  http.rb:264
+     2.00  promise.rb:32
+   classes: String=42.0, Array=22.0, Hash=8.0, IO::Buffer=4.0, Proc=3.0, Thread::ConditionVariable=2.0, Thread::Mutex=2.0, Async::Promise=2.0

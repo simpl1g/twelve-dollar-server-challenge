@@ -1,0 +1,7 @@
+server up after 2s
+{"name":"v03-direct-write-fast-path-c1-A","image":"tdsc-cicloid:base","users":80000,"seconds":120,"requests":1016132,"rps":8467.767,"error_rate":0,"p50_ms":2.147,"p95_ms":10.056,"p99_ms":47.627,"event_loop_delay_ms":49.733,"peak_connections":66039,"connects":262589,"retired_connections":197353,"pass":true,"procs":2,"server_cpu_pct":35.3,"us_per_req":41.6,"server_peak_mem_mb":487}
+{"progress_seconds":60,"requests":128079,"errors":0,"connections":32799,"connects":60304,"retired_connections":27505}
+{"progress_seconds":90,"requests":253204,"errors":0,"connections":32719,"connects":83559,"retired_connections":50840}
+{"progress_seconds":120,"requests":381688,"errors":0,"connections":32682,"connects":106652,"retired_connections":73970}
+/app/http.rb:145: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!
+listening on 0.0.0.0:3000 (141 iseqs compiled)

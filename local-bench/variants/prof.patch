@@ -1,0 +1,255 @@
+diff --git a/Gemfile b/Gemfile
+index fcd7f5a55e040646c38edd3ff0a034d1032d2fd1..3cb96c0a4b9d34f3908f5f0ff37fec15857662bc 100644
+--- a/Gemfile
++++ b/Gemfile
+@@ -5,3 +5,7 @@ gem "io-event", "1.22.1"
+ gem "extralite", "3.1.3" # built against the SQLite in /opt/sqlite (install.sh)
+ gem "rbnacl", "7.1.2"
+ gem "json", "3.1.0"
++
++# profiling only (variant prof)
++gem "vernier", "1.12.0"
++gem "stackprof", "0.2.28"
+diff --git a/Gemfile.lock b/Gemfile.lock
+index de826fb1eb4954d45c6e11d3a031635d349073e0..af4415f2550c07f5b58be8452b4e97a784c3f037 100644
+--- a/Gemfile.lock
++++ b/Gemfile.lock
+@@ -19,6 +19,8 @@ GEM
+     json (3.1.0)
+     rbnacl (7.1.2)
+       ffi (~> 1)
++    stackprof (0.2.28)
++    vernier (1.12.0)
+ 
+ PLATFORMS
+   ruby
+@@ -29,6 +31,8 @@ DEPENDENCIES
+   io-event (= 1.22.1)
+   json (= 3.1.0)
+   rbnacl (= 7.1.2)
++  stackprof (= 0.2.28)
++  vernier (= 1.12.0)
+ 
+ CHECKSUMS
+   async (2.46.0) sha256=34f984733dbf63a997376346451ec995e858cacc3105e86ccfeaf8877b4f490b
+@@ -41,6 +45,8 @@ CHECKSUMS
+   io-event (1.22.1) sha256=0dd054cefe4a29f1b8286604f332c14f3208d75f54902961e91e94d45e5e1600
+   json (3.1.0) sha256=3ce7ccf8fde58960177a3a756c31f292a4c1e1dedee884547096a5b0604e3bd8
+   rbnacl (7.1.2) sha256=c58433e93b390a7b8c03a9da9e54f2de67e6cc3d6731553265299c6aac889a60
++  stackprof (0.2.28) sha256=4ec2ace02f386012b40ca20ef80c030ad711831f59511da12e83b34efb0f9a04
++  vernier (1.12.0) sha256=51a018d6ef6fdf8052dcfdcde996d0337a0fd4be6b0c3ed7eb0fa6852ff4f48b
+ 
+ BUNDLED WITH
+   4.0.20
+diff --git a/alloc_trace.rb b/alloc_trace.rb
+new file mode 100644
+index 0000000000000000000000000000000000000000..8307ff7a149793abea68d4cc534285a730d5f83d
+--- /dev/null
++++ b/alloc_trace.rb
+@@ -0,0 +1,76 @@
++# frozen_string_literal: true
++
++# Allocation picture per request type, through the real server path (listener, epoll dispatch,
++# worker fibers, scheduler reads and writes) inside one process: a client fiber sends each request
++# over TCP and reads the response. Run: SQLITE_PATH=... JWT_SECRET=... ruby --yjit alloc_trace.rb
++require "objspace"
++require "async"
++require_relative "app"
++require_relative "http"
++
++store = Store.new(ENV.fetch("SQLITE_PATH"))
++app = App.new(store, ENV.fetch("JWT_SECRET"))
++server = HTTPServer.new(app, "127.0.0.1", 0)
++port = server.instance_variable_get(:@server).local_address.ip_port
++
++key = ENV.fetch("JWT_SECRET").b.ljust(32, "\0")
++claims = [{ sub: "7", username: "tracer", exp: Time.now.to_i + 3600 }.to_json].pack("m0").tr("+/", "-_").delete("=")
++signing_input = "#{App::HS256_HEADER}.#{claims}".b
++mac = String.new("\0" * 32, encoding: Encoding::BINARY)
++Sodium.hmac_sha256(mac, signing_input, signing_input.bytesize, key)
++auth = "Authorization: Bearer #{signing_input}.#{[mac].pack("m0").tr("+/", "-_").delete("=")}\r\n"
++post_body = '{"body":"profiling post body"}'
++REQUESTS = {
++  "GET /feed" => "GET /feed HTTP/1.1\r\nHost: x\r\n\r\n",
++  "GET /posts/:id" => "GET /posts/1 HTTP/1.1\r\nHost: x\r\n\r\n",
++  "POST like (new or repeat)" => "POST /posts/%d/like HTTP/1.1\r\nHost: x\r\n#{auth}\r\n",
++  "POST /posts" => "POST /posts HTTP/1.1\r\nHost: x\r\n#{auth}Content-Length: #{post_body.bytesize}\r\n\r\n#{post_body}"
++}.freeze
++N = Integer(ENV.fetch("N", "200"))
++
++def roundtrip(sock, request, buf)
++  sock.write(request)
++  sock.readpartial(65_536, buf)
++  # responses are small (<8 KB) and written with one write; one read is enough on loopback
++end
++
++Async do |task|
++  server.run(task)
++  sock = TCPSocket.new("127.0.0.1", port)
++  buf = String.new(capacity: 65_536)
++  # warm: YJIT and lazy initialisation, 100 of each
++  REQUESTS.each_value { |r| 100.times { |i| roundtrip(sock, r % (i + 1), buf) } }
++  sleep 0.1
++  GC.start
++  GC.disable
++
++  per_type = {}
++  REQUESTS.each do |name, request|
++    before = GC.stat(:total_allocated_objects)
++    ObjectSpace.trace_object_allocations_start
++    N.times { |i| roundtrip(sock, request % (1000 + i), buf) }
++    ObjectSpace.trace_object_allocations_stop
++    after = GC.stat(:total_allocated_objects)
++    sites = Hash.new(0)
++    classes = Hash.new(0)
++    ObjectSpace.each_object do |obj|
++      file = ObjectSpace.allocation_sourcefile(obj) or next
++      line = ObjectSpace.allocation_sourceline(obj)
++      sites["#{File.basename(file)}:#{line}"] += 1
++      classes[obj.class.name || obj.class.inspect] += 1
++    end
++    ObjectSpace.trace_object_allocations_clear
++    per_type[name] = { objects_per_req: ((after - before).to_f / N).round(1),
++                       traced_per_req: (sites.values.sum.to_f / N).round(1),
++                       sites: sites.sort_by { -_2 }.first(14).to_h { |k, v| [k, (v.to_f / N).round(2)] },
++                       classes: classes.sort_by { -_2 }.first(8).to_h { |k, v| [k, (v.to_f / N).round(2)] } }
++  end
++  GC.enable
++  sock.close
++  per_type.each do |name, info|
++    puts "== #{name}: #{info[:objects_per_req]} objects/request (#{info[:traced_per_req]} attributed; the rest are C-internal or freed)"
++    info[:sites].each { |site, n| puts format("   %6.2f  %s", n, site) }
++    puts "   classes: " + info[:classes].map { |k, v| "#{k}=#{v}" }.join(", ")
++  end
++  task.stop
++end
+diff --git a/server.rb b/server.rb
+index b011fefdc2451ae93dd2c02a14b719e14085394d..a938f383e4ccf3dc4003db1ccd0e745cafae2881 100644
+--- a/server.rb
++++ b/server.rb
+@@ -4,10 +4,111 @@ require "async"
+ require_relative "app"
+ require_relative "http"
+ 
++# --- profiling hooks (variant prof only) -------------------------------------------------------
++# SIGUSR1 starts a sampler, SIGUSR2 stops it and writes /tmp/profile.<mode>.*; GC.stat deltas and
++# the request count for the window go to stderr as one JSON line. The mode is read from
++# /tmp/profile.mode (wall | cpu | alloc) when that file exists, otherwise it cycles wall, cpu, alloc.
++#   wall  vernier, 500 us wall-clock samples, Firefox profiler JSON
++#   cpu   stackprof :cpu (ITIMER_PROF, 500 us of process CPU time), Marshal dump
++#   alloc vernier, 1 ms wall samples plus every 25th allocation with its stack
++require "vernier"
++require "stackprof"
++require "json"
++
++class CountingApp
++  attr_reader :requests
++
++  def initialize(app)
++    @app = app
++    @requests = 0
++  end
++
++  def call(method, path, authorization, body)
++    @requests += 1
++    @app.call(method, path, authorization, body)
++  end
++end
++
++module Profiler
++  MODES = %w[wall cpu alloc].freeze
++  @pending = nil
++  @active = nil
++  @cycle = 0
++
++  class << self
++    # Trap context: only record the request; a reactor task applies it.
++    def request(command)
++      @pending = command
++    end
++
++    def poll(requests)
++      command, @pending = @pending, nil
++      case command
++      when :start then start(requests)
++      when :stop then stop(requests)
++      end
++    end
++
++    private
++
++    def start(requests)
++      return warn("profiler: #{@active} already running") if @active
++
++      mode = File.exist?("/tmp/profile.mode") ? File.read("/tmp/profile.mode").strip : MODES[@cycle % MODES.size]
++      @cycle += 1
++      @requests0 = requests
++      @gc0 = GC.stat
++      @t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
++      @cpu0 = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID)
++      case mode
++      when "cpu" then StackProf.start(mode: :cpu, interval: 500, raw: true)
++      when "alloc" then Vernier.start_profile(mode: :wall, interval: 1000, allocation_interval: 25)
++      else Vernier.start_profile(mode: :wall, interval: 500)
++      end
++      @active = mode
++      warn "profiler: #{mode} started"
++    end
++
++    def stop(requests)
++      return warn("profiler: nothing running") unless @active
++
++      seconds = Process.clock_gettime(Process::CLOCK_MONOTONIC) - @t0
++      cpu = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID) - @cpu0
++      gc = GC.stat
++      n = requests - @requests0
++      path = if @active == "cpu"
++               StackProf.stop
++               StackProf.results("/tmp/profile.cpu.dump")
++               "/tmp/profile.cpu.dump"
++             else
++               out = "/tmp/profile.#{@active}.json"
++               Vernier.stop_profile.write(out: out)
++               out
++             end
++      delta = ->(key) { gc[key] - @gc0[key] }
++      warn JSON.generate(
++        profile: @active, path: path, seconds: seconds.round(2), requests: n,
++        cpu_seconds: cpu.round(3), us_cpu_per_req: (n.positive? ? (cpu * 1e6 / n).round(1) : nil),
++        allocated_objects: delta[:total_allocated_objects],
++        allocated_objects_per_req: (n.positive? ? (delta[:total_allocated_objects].to_f / n).round(1) : nil),
++        allocated_pages: delta[:total_allocated_pages], freed_objects: delta[:total_freed_objects],
++        gc_count: delta[:count], minor_gc: delta[:minor_gc_count], major_gc: delta[:major_gc_count],
++        gc_time_ms: delta[:time], heap_live_slots: gc[:heap_live_slots], rss_mb: (File.read("/proc/self/statm").split[1].to_i * 4096 / 1048576.0).round(1),
++        yjit: (RubyVM::YJIT.enabled? ? RubyVM::YJIT.runtime_stats.slice(:compiled_iseq_count, :compiled_block_count, :invalidation_count, :code_region_size) : nil)
++      )
++      @active = nil
++    end
++  end
++end
++
++Signal.trap("USR1") { Profiler.request(:start) }
++Signal.trap("USR2") { Profiler.request(:stop) }
++# ------------------------------------------------------------------------------------------------
++
+ host = ENV.fetch("HOST", "127.0.0.1")
+ port = Integer(ENV.fetch("PORT", "3000"))
+ store = Store.new(ENV.fetch("SQLITE_PATH"))
+-app = App.new(store, ENV.fetch("JWT_SECRET"))
++app = CountingApp.new(App.new(store, ENV.fetch("JWT_SECRET")))
+ server = HTTPServer.new(app, host, port)
+ 
+ # Warm YJIT before listening: reads, a JWT verification and a body parse, 50 times each (the call
+@@ -36,6 +137,12 @@ Async do |task|
+       store.checkpoint
+     end
+   end
++  task.async do
++    loop do
++      sleep 0.2
++      Profiler.poll(app.requests)
++    end
++  end
+ 
+   server.run(task)
+   compiled = RubyVM::YJIT.enabled? ? "#{RubyVM::YJIT.runtime_stats[:compiled_iseq_count]} iseqs compiled" : "YJIT off"

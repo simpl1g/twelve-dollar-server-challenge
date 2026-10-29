@@ -1,0 +1,1 @@
+{"name":"final-knee-120000-A","image":"tdsc-cicloid:base","users":120000,"seconds":300,"requests":3807483,"rps":12691.61,"error_rate":0,"p50_ms":3.901,"p95_ms":20.023,"p99_ms":41.419,"event_loop_delay_ms":86.063,"peak_connections":67148,"connects":1905997,"retired_connections":1840742,"pass":true,"procs":3,"server_cpu_pct":54.3,"us_per_req":42.8,"server_peak_mem_mb":520}

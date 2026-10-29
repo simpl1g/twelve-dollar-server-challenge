@@ -1,0 +1,5 @@
+!/results/
+/results/prof.profile.*
+/build-*.log
+/locks/
+/variants/*/

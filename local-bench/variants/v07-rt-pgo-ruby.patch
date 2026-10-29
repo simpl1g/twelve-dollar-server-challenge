@@ -1,0 +1,277 @@
+diff --git a/README.md b/README.md
+index 9202e9b62bb3600f56ef95a0ada70b5e5549424a..cee87b4476d1578ed1b231e2f1d860825c2e54e8 100644
+--- a/README.md
++++ b/README.md
+@@ -2,7 +2,7 @@
+ 
+ | | |
+ |---|---|
+-| Language | Ruby 4.0.7 with YJIT, built from source with jemalloc and `-march=native` |
++| Language | Ruby 4.0.7 with YJIT, built from source with jemalloc, `-march=native` and profile-guided optimization (two passes, trained on the server's own request path) |
+ | Framework | [async](https://github.com/socketry/async) 2.46.0 reactor on io-event 1.22.1 (io_uring selector, epoll fallback); the HTTP/1.1 layer is our own (`http.rb`, `epoll.rb`) |
+ | SQLite driver | extralite 3.1.3, statically linked to SQLite 3.54.0, built from the amalgamation with profile-guided optimization |
+ | JWT | HMAC-SHA256 from libsodium 1.0.22, called through rbnacl 7.1.2's FFI bindings |
+@@ -15,7 +15,7 @@ Every gem, transitive ones included, is pinned with checksums in `Gemfile.lock`.
+ ## Running it
+ 
+ ```bash
+-sudo bash install.sh   # apt build deps, then Ruby, SQLite and libsodium from source (~10 min on 1 vCPU)
++sudo bash install.sh   # apt build deps, then Ruby (twice: see PGO below), SQLite and libsodium from source (INSTALL_MINUTES)
+ bash build.sh          # gems into vendor/bundle
+ SQLITE_PATH=... JWT_SECRET=... HOST=0.0.0.0 PORT=80 bash start.sh
+ ```
+@@ -69,6 +69,19 @@ version keeps the Async reactor and replaces the HTTP server.
+   on). It's then profile-guided: `sqlite_train.c` runs the server's own statements in the load test's
+   mix against a synthetic database, and the final build uses that profile. That made reads about 7%
+   faster.
++- **Ruby compiled for this workload, the same way.** `install.sh` builds the interpreter twice. The
++  first build is instrumented (`-fprofile-generate` on Ruby's own objects only; `rbconfig` stays
++  clean, so the gems `build.sh` compiles later are not instrumented). `ruby_train.rb` runs that build
++  through the server's real parser, app and reactor (`http.rb`, `app.rb`): the warm-up mix through
++  `HTTPServer#drain`, then the load test's request mix with JWT verification, served over loopback to
++  a forked 64-connection client, of which about one request in six ends its connection (hang-up,
++  `Connection: close` or HTTP/1.0) so accept and close are profiled too. It runs against a synthetic
++  database with the challenge schema under the exact gem stack of `Gemfile.lock`, never against
++  `$SQLITE_PATH` or the service port, and the client checks every status, so a half-served run fails
++  the install. The second build uses that profile (`-fprofile-use -fprofile-partial-training`: code
++  the training never ran stays at plain `-O3`) after a check that it covers the VM, string, hash,
++  array, object, GC and IO objects. Nothing of the instrumented build, the training gems or the
++  profile is kept, and `rbconfig`'s `CFLAGS`/`LDFLAGS` are identical to a plain build. GAIN_SENTENCE
+ - **One thread, and SQLite never releases the GVL.** Every query is an index lookup that takes
+   microseconds, so releasing and reacquiring the GVL would cost more than it saves.
+ - **JWT verified on every request**, with no caching (rule 5). libsodium's one-shot HMAC-SHA256 takes
+diff --git a/install.sh b/install.sh
+index 6a935fc0ac157e5ab4dfde4d4475a59787b05d0e..9426aa97b3597c1f15275f3e7700c2f9d62ab234 100755
+--- a/install.sh
++++ b/install.sh
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env bash
+ # Runs once as root on a clean Ubuntu 24.04. Builds from pinned, checksummed sources:
+-#   Ruby 4.0 (YJIT, jemalloc) under /opt/ruby, SQLite 3.54 (static, tuned) under /opt/sqlite,
++#   Ruby 4.0 (YJIT, jemalloc, profile-guided) under /opt/ruby, SQLite 3.54 (static, tuned) under /opt/sqlite,
+ #   libsodium 1.0.22 under /usr/local.
+ set -euo pipefail
+ export DEBIAN_FRONTEND=noninteractive
+@@ -62,14 +62,46 @@ fi
+ 
+ RUBY_VERSION=4.0.7
+ RUBY_SHA256=911ace20f90d068ca0e4dda6d0e4f0f81e52e52f2dd4f4004c721e253412e82d
+-if [ "$(/opt/ruby/bin/ruby -e 'print RUBY_VERSION' 2>/dev/null)" != "$RUBY_VERSION" ]; then
++# Profile-guided, like SQLite: pass 1 is instrumented, ruby_train.rb runs the server's own request
++# path on it under the pinned gems, and pass 2 rebuilds from a fresh tree at the same path (the
++# profile is keyed by object path). XCFLAGS reach only Ruby's own objects, not rbconfig's cflags, so
++# the gems build.sh compiles later stay clean.
++if ! grep -qx "$RUBY_VERSION-pgo" /opt/ruby/VERSION 2>/dev/null; then
++  for f in ruby_train.rb app.rb http.rb epoll.rb Gemfile Gemfile.lock; do
++    [ -f "$here/$f" ] || { echo "install.sh: $here/$f is needed to train the Ruby build" >&2; exit 1; }
++  done
+   fetch "https://cache.ruby-lang.org/pub/ruby/4.0/ruby-$RUBY_VERSION.tar.gz" "$RUBY_SHA256" ruby.tar.gz
+-  cd "$work"
+-  tar -xzf ruby.tar.gz
+-  cd "ruby-$RUBY_VERSION"
+-  ./configure --prefix=/opt/ruby --enable-yjit --with-jemalloc --disable-install-doc --disable-install-rdoc \
+-    cflags="$NATIVE"
++  CONFIGURE=(--enable-yjit --with-jemalloc --disable-install-doc --disable-install-rdoc cflags="$NATIVE")
++  pgo="$work/rbpgo"
++  instrumented="$work/ruby-instrumented"
++  cd "$work" && tar -xzf ruby.tar.gz && cd "ruby-$RUBY_VERSION"
++  # LDFLAGS, not XLDFLAGS: mkmf's link checks for the bundled extensions link the instrumented
++  # libruby-static and need libgcov, or every have_func() fails and ext/json refuses to compile.
++  ./configure "${CONFIGURE[@]}" --prefix="$instrumented" \
++    XCFLAGS="-fprofile-generate -fprofile-update=atomic -fprofile-dir=$pgo" LDFLAGS="-fprofile-generate"
+   make -j"$(nproc)"
+   make install
++  # The trainer runs the exact gem stack of Gemfile.lock (bundler, ruby platform), built against the
++  # instrumented interpreter in a scratch path. Nothing of it is kept.
++  bundle_env=(BUNDLE_GEMFILE="$here/Gemfile" BUNDLE_PATH="$work/train-gems" BUNDLE_APP_CONFIG="$work/train-bundle"
++    BUNDLE_FROZEN=true BUNDLE_FORCE_RUBY_PLATFORM=true BUNDLE_BUILD__EXTRALITE=--with-sqlite3-dir=/opt/sqlite)
++  env "${bundle_env[@]}" "$instrumented/bin/bundle" install --jobs "$(nproc)"
++  rm -rf "$pgo" # discard what the build and the gem installs recorded; only the training run counts
++  env "${bundle_env[@]}" "$instrumented/bin/ruby" --yjit --yjit-call-threshold=5 -rbundler/setup \
++    "$here/ruby_train.rb" "$work/train-ruby.db"
++  # The profile must cover the interpreter's hot objects, not just a warm-up.
++  for o in vm string gc hash array object io; do
++    f="$(ls "$pgo"/*"#$o.gcda" 2>/dev/null | head -1 || true)"
++    [ -s "$f" ] || { echo "install.sh: no Ruby profile for $o.c" >&2; exit 1; }
++  done
++  echo "ruby profile: $(ls "$pgo" | wc -l) objects"
++  cd "$work" && rm -rf "ruby-$RUBY_VERSION" && tar -xzf ruby.tar.gz && cd "ruby-$RUBY_VERSION"
++  ./configure "${CONFIGURE[@]}" --prefix=/opt/ruby \
++    XCFLAGS="-fprofile-use -fprofile-partial-training -fprofile-dir=$pgo -Wno-missing-profile"
++  make -j"$(nproc)"
++  rm -rf /opt/ruby
++  make install
++  echo "$RUBY_VERSION-pgo" > /opt/ruby/VERSION
++  rm -rf "$instrumented" "$work/train-gems"
+ fi
+ /opt/ruby/bin/ruby --yjit -e 'abort "YJIT unavailable" unless RubyVM::YJIT.enabled?; puts RUBY_DESCRIPTION'
+diff --git a/ruby_train.rb b/ruby_train.rb
+new file mode 100644
+index 0000000000000000000000000000000000000000..69d8b9b585338a7d4f4d4cee2859c2bc70f5959b
+--- /dev/null
++++ b/ruby_train.rb
+@@ -0,0 +1,164 @@
++# frozen_string_literal: true
++# Profile-guided optimization workload for Ruby itself, run by install.sh on an instrumented build.
++# Builds a synthetic database with the challenge schema, then runs the server's own parser, app and
++# reactor: the warm-up mix through HTTPServer#drain, then the load test's request mix over loopback
++# from a forked client against the real reactor. About one request in six ends its connection, so
++# the accept and close paths are profiled too. Not part of the server.
++#
++#   ruby --yjit -rbundler/setup ruby_train.rb <scratch.db>
++require "async"
++require "json"
++require "extralite"
++require_relative "app"
++require_relative "http"
++
++# The pinned stack of Gemfile.lock, so the profile matches what start.sh runs.
++abort "ruby_train: async #{Async::VERSION}, expected 2.46.0" unless Async::VERSION == "2.46.0"
++abort "ruby_train: io-event #{IO::Event::VERSION}, expected 1.22.1" unless IO::Event::VERSION == "1.22.1"
++$stderr.puts "ruby_train: selector #{IO::Event::Selector.default}"
++
++path = ARGV.fetch(0)
++SECRET = "train-secret"
++HOST = "127.0.0.1"
++CLIENTS = 64
++ROUNDS = 800
++WARM_ROUNDS = 3000
++File.delete(path) if File.exist?(path)
++db = Extralite::Database.new(path)
++db.execute("PRAGMA journal_mode=WAL")
++db.execute(<<~SQL)
++  CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE,
++    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
++SQL
++db.execute(<<~SQL)
++  CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
++    body TEXT NOT NULL CHECK (length(body) BETWEEN 1 AND 500),
++    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
++SQL
++db.execute(<<~SQL)
++  CREATE TABLE likes (user_id INTEGER NOT NULL REFERENCES users(id), post_id INTEGER NOT NULL REFERENCES posts(id),
++    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), PRIMARY KEY (user_id, post_id));
++SQL
++db.execute("CREATE INDEX posts_created_at_id_idx ON posts (created_at DESC, id DESC)")
++db.execute("CREATE INDEX posts_user_id_idx ON posts (user_id)")
++db.execute("CREATE INDEX likes_post_id_idx ON likes (post_id)")
++db.execute("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<5000) INSERT INTO users(id,username) SELECT i,'user_'||i FROM n")
++db.execute("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<50000) INSERT INTO posts(id,user_id,body,created_at) " \
++           "SELECT i,1+i%5000,'post body number '||i||' with some text',strftime('%Y-%m-%dT%H:%M:%fZ','2025-01-01','+'||i||' seconds') FROM n")
++db.execute("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<200000) INSERT OR IGNORE INTO likes(user_id,post_id) SELECT 1+(i*7)%5000,1+(i*13)%50000 FROM n")
++db.execute("ANALYZE")
++db.close
++
++key = SECRET.b.ljust(32, "\0")
++sign = lambda do |sub, username|
++  claims = [{ sub: sub.to_s, username: username, exp: Time.now.to_i + 3600 }.to_json].pack("m0").tr("+/", "-_").delete("=")
++  input = "#{App::HS256_HEADER}.#{claims}".b
++  mac = String.new("\0" * 32, encoding: Encoding::BINARY)
++  Sodium.hmac_sha256(mac, input, input.bytesize, key)
++  "#{input}.#{[mac].pack("m0").tr("+/", "-_").delete("=")}"
++end
++tokens = (1..CLIENTS).map { |i| sign.call(i, "user_#{i}") }
++
++store = Store.new(path)
++app = App.new(store, SECRET)
++server = port = nil
++5.times do
++  port = 3100 + rand(1000)
++  server = HTTPServer.new(app, HOST, port)
++  break
++rescue Errno::EADDRINUSE
++  server = nil
++end
++abort "ruby_train: no free port" unless server
++
++done_r, done_w = IO.pipe
++# The client checks every status, so a profile is only accepted when the server served the whole mix.
++client = fork do
++  done_r.close
++  srand(7)
++  connect = lambda do
++    tries = 0
++    begin
++      TCPSocket.new(HOST, port)
++    rescue SystemCallError
++      raise if (tries += 1) > 60
++
++      sleep 0.5
++      retry
++    end
++  end
++  read_response = lambda do |s|
++    buf = String.new
++    buf << s.readpartial(8192) until (i = buf.index("\r\n\r\n"))
++    len = buf[/content-length: (\d+)/i, 1].to_i
++    have = buf.bytesize - (i + 4)
++    s.read(len - have) if have < len
++    buf[9, 3].to_i
++  end
++  socks = Array.new(CLIENTS) { connect.call }
++  expected = Array.new(CLIENTS)
++  closing = Array.new(CLIENTS)
++  bad = 0
++  ROUNDS.times do
++    socks.each_with_index do |s, k|
++      r = rand
++      request, expected[k] =
++        if r < 0.46 then ["GET /feed HTTP/1.1\r\nHost: x\r\n\r\n", [200]]
++        elsif r < 0.92 then ["GET /posts/#{rand(1..50_000)} HTTP/1.1\r\nHost: x\r\n\r\n", [200]]
++        elsif r < 0.99 then ["POST /posts/#{rand(1..50_000)}/like HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer #{tokens[k]}\r\nContent-Length: 0\r\n\r\n", [200, 201]]
++        else
++          body = %({"body":"  a freshly written post body #{k}  "})
++          ["POST /posts HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer #{tokens[k]}\r\nContent-Type: application/json\r\nContent-Length: #{body.bytesize}\r\n\r\n#{body}", [201]]
++        end
++      # The connection ends by the client hanging up, by Connection: close, or by HTTP/1.0.
++      c = rand
++      closing[k] = c < 0.16
++      if c >= 0.12 && c < 0.15 then request = request.sub("\r\nHost: x\r\n", "\r\nHost: x\r\nConnection: close\r\n")
++      elsif c >= 0.15 && c < 0.16 then request = request.sub(" HTTP/1.1\r\n", " HTTP/1.0\r\n")
++      end
++      s.write(request)
++    end
++    socks.each_with_index do |s, k|
++      bad += 1 unless expected[k].include?(read_response.call(s))
++      next unless closing[k]
++
++      s.close
++      socks[k] = connect.call
++    end
++  end
++  socks.each(&:close)
++  $stderr.puts "ruby_train: #{bad} unexpected responses" if bad.positive?
++  exit!(bad.zero? ? 0 : 1)
++rescue StandardError => error
++  $stderr.puts "ruby_train: client failed: #{error.class}: #{error.message}"
++  exit!(1)
++end
++done_w.close
++
++auth = "Authorization: Bearer #{tokens[0]}\r\n"
++warm = [
++  "GET /feed HTTP/1.1\r\nHost: x\r\n\r\n",
++  "GET /posts/1 HTTP/1.1\r\nHost: x\r\n\r\n",
++  "POST /posts HTTP/1.1\r\nHost: x\r\n#{auth}Content-Length: 11\r\n\r\n{\"body\":\"\"}",
++  "POST /posts/0/like HTTP/1.1\r\nHost: x\r\n#{auth}\r\n",
++  "GET /nope HTTP/1.0\r\nHost: x\r\n\r\n",
++  "GET /posts/abc HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
++]
++server.warm(warm, WARM_ROUNDS)
++GC.compact
++Process.warmup if Process.respond_to?(:warmup)
++
++Async do |task|
++  task.async do
++    loop do
++      sleep 1
++      store.checkpoint
++    end
++  end
++  server.run(task)
++  done_r.wait_readable
++  task.stop
++end
++_, status = Process.wait2(client)
++abort "ruby_train: training client failed (exit #{status.exitstatus})" unless status.success?
++$stderr.puts "ruby_train: #{CLIENTS * ROUNDS} reactor requests + #{warm.size * WARM_ROUNDS} drained"

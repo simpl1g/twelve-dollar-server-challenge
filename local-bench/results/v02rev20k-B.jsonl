@@ -1,0 +1,1 @@
+{"name":"v02rev20k-B","image":"tdsc-cicloid:v02-review","users":20000,"seconds":60,"requests":126774,"rps":2112.900,"error_rate":0,"p50_ms":0.847,"p95_ms":3.166,"p99_ms":13.773,"event_loop_delay_ms":33.982,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":1,"server_cpu_pct":11.5,"us_per_req":54.3,"server_peak_mem_mb":179}

@@ -1,0 +1,1 @@
+{"name":"v02-ref","image":"tdsc-cicloid:v02-ref","users":20000,"seconds":60,"requests":126810,"rps":2113.500,"error_rate":0,"p50_ms":0.836,"p95_ms":2.581,"p99_ms":11.497,"event_loop_delay_ms":27.148,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":1,"server_cpu_pct":10.9,"us_per_req":50.9,"server_peak_mem_mb":172}

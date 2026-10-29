@@ -1,0 +1,6 @@
+server up after 2s
+{"name":"v02rev20k-swap-A","image":"tdsc-cicloid:v02-review","users":20000,"seconds":60,"requests":126795,"rps":2113.250,"error_rate":0,"p50_ms":0.833,"p95_ms":2.247,"p99_ms":8.687,"event_loop_delay_ms":31.365,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":1,"server_cpu_pct":10.9,"us_per_req":51,"server_peak_mem_mb":169}
+{"progress_seconds":30,"requests":21121,"errors":0,"connections":20000,"connects":20000,"retired_connections":0}
+{"progress_seconds":60,"requests":84564,"errors":0,"connections":20000,"connects":20000,"retired_connections":0}
+server.rb:42: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!
+listening on 0.0.0.0:3000 (139 iseqs compiled)

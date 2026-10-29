@@ -1,0 +1,1 @@
+{"name":"base20k2b","image":"tdsc-cicloid:base","users":20000,"seconds":60,"requests":126808,"rps":2113.467,"error_rate":0,"p50_ms":0.776,"p95_ms":4.626,"p99_ms":14.059,"event_loop_delay_ms":141.912,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":16.9,"us_per_req":79.3,"server_peak_mem_mb":215}

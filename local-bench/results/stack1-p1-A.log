@@ -1,0 +1,7 @@
+server up after 2s
+{"name":"stack1-p1-A","image":"tdsc-cicloid:v01-feed-no-sorter","users":20000,"seconds":60,"requests":126837,"rps":2113.95,"error_rate":0,"p50_ms":0.617,"p95_ms":2.345,"p99_ms":10.773,"event_loop_delay_ms":26.483,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":13.8,"us_per_req":64.7,"server_peak_mem_mb":207}
+{"progress_seconds":60,"requests":42284,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":30,"requests":10604,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":60,"requests":42241,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+/app/http.rb:145: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!
+listening on 0.0.0.0:3000 (142 iseqs compiled)

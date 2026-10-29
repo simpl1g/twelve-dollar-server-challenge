@@ -1,0 +1,19 @@
+diff --git a/http.rb b/http.rb
+index 617ed67b6fa1ed66138adc83f6914bb23f1f9153..0743bed7cd1720aa6e37d5e72ac5e65b670eacb1 100644
+--- a/http.rb
++++ b/http.rb
+@@ -288,8 +288,12 @@ class HTTPServer
+     write(socket, out)
+   end
+ 
+-  # Through the fiber scheduler: with io_uring, every worker's write is queued and submitted together.
++  # One direct send(2) first; only a partial or would-block write falls back to the scheduler's
++  # io_uring path for the remainder.
+   def write(socket, data)
+-    socket.write(data)
++    written = socket.write_nonblock(data, exception: false)
++    return if written == data.bytesize
++    written = 0 if written == :wait_writable
++    socket.write(data.byteslice(written, data.bytesize - written)) # ring path handles POLLOUT + the rest
+   end
+ end

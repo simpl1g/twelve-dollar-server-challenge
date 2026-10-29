@@ -1,0 +1,1 @@
+{"name":"v03p2-base20k","image":"tdsc-cicloid:base","users":20000,"seconds":60,"requests":126787,"rps":2113.117,"error_rate":0,"p50_ms":0.767,"p95_ms":2.874,"p99_ms":14.716,"event_loop_delay_ms":38.649,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":1,"server_cpu_pct":10.9,"us_per_req":51.1,"server_peak_mem_mb":173}

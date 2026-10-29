@@ -1,0 +1,10 @@
+server up after 2s
+{"name":"v06-worker-pool-lifo-shrink-p1-B","image":"tdsc-cicloid:v06-worker-pool-lifo-shrink","users":20000,"seconds":60,"requests":126802,"rps":2113.366,"error_rate":0,"p50_ms":0.621,"p95_ms":12.134,"p99_ms":61.801,"event_loop_delay_ms":52.241,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":13.2,"us_per_req":61.9,"server_peak_mem_mb":208}
+{"progress_seconds":60,"requests":42273,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":30,"requests":10606,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":60,"requests":42245,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+pool workers=64 idle=64 backlog=0 open=20000 commits=2168 minor_gc=31 gc_ms=115
+pool workers=74 idle=48 backlog=0 open=20000 commits=3461 minor_gc=37 gc_ms=146
+pool workers=64 idle=64 backlog=0 open=20000 commits=4826 minor_gc=44 gc_ms=166
+pool workers=96 idle=64 backlog=0 open=20000 commits=6148 minor_gc=51 gc_ms=194
+pool workers=73 idle=64 backlog=0 open=20000 commits=7465 minor_gc=57 gc_ms=212

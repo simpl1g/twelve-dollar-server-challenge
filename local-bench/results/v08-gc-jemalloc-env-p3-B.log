@@ -1,0 +1,7 @@
+server up after 2s
+{"name":"v08-gc-jemalloc-env-p3-B","image":"tdsc-cicloid:v08-gc-jemalloc-env","users":20000,"seconds":60,"requests":126791,"rps":2113.183,"error_rate":0,"p50_ms":0.698,"p95_ms":3.197,"p99_ms":15.372,"event_loop_delay_ms":79.572,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":15.1,"us_per_req":70.6,"server_peak_mem_mb":218}
+{"progress_seconds":60,"requests":42269,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":30,"requests":10584,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":60,"requests":42217,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+/app/http.rb:145: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!
+listening on 0.0.0.0:3000 (141 iseqs compiled)

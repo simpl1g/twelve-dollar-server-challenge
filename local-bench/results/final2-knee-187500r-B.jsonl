@@ -1,0 +1,1 @@
+{"name":"final2-knee-187500r-B","image":"tdsc-cicloid:final2","users":187500,"seconds":300,"requests":5947267,"rps":19824.223,"error_rate":0,"p50_ms":3.673,"p95_ms":44.319,"p99_ms":178.453,"event_loop_delay_ms":106.303,"peak_connections":67996,"connects":4139065,"retired_connections":4073978,"pass":true,"procs":3,"server_cpu_pct":65.5,"us_per_req":33.1,"server_peak_mem_mb":608}

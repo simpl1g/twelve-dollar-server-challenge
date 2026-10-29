@@ -1,0 +1,102 @@
+diff --git a/app.rb b/app.rb
+index 16920d847804f7d271d50453734da43c1c27399a..34bee51c34bcfd281d57836ad33f0faf9bb67b77 100644
+--- a/app.rb
++++ b/app.rb
+@@ -20,6 +20,33 @@ end
+ # Group commit: the first write in a reactor pass opens BEGIN IMMEDIATE and schedules one COMMIT
+ # for the next pass. Every write in between joins that transaction, and every response waits for
+ # the COMMIT. Reads that run while a batch is open may have seen its rows, so they wait too.
++# The requests of one write transaction park here until COMMIT has returned (so nothing is answered
++# before it is durable): straight to the scheduler, without the Mutex, ConditionVariable and keyword
++# forwarding of Async::Promise, which YJIT could not compile and which cost a C-to-Ruby call per wait.
++class Batch
++  def initialize
++    @fibers = []
++    @outcome = nil
++  end
++
++  def wait
++    unless @outcome
++      @fibers << Fiber.current
++      Fiber.scheduler.transfer
++    end
++    raise @outcome if @outcome.is_a?(Exception)
++
++    @outcome
++  end
++
++  def finish(outcome)
++    @outcome = outcome
++    scheduler = Fiber.scheduler
++    @fibers.each { |fiber| scheduler.unblock(nil, fiber) }
++    @fibers.clear
++  end
++end
++
+ class Store
+   POST_JSON = "json_object('id',p.id,'body',p.body,'created_at',p.created_at,'author',u.username," \
+               "'like_count',(SELECT count(*) FROM likes l WHERE l.post_id=p.id))"
+@@ -116,7 +143,7 @@ class Store
+     return @batch if @batch
+ 
+     @db.execute("BEGIN IMMEDIATE")
+-    batch = @batch = Async::Promise.new
++    batch = @batch = Batch.new
+     Async do |task|
+       task.yield # let every request that is ready in this pass join the batch
+       commit(batch)
+@@ -130,9 +157,9 @@ class Store
+       @db.execute("COMMIT")
+     rescue Extralite::Error => error
+       @db.execute("ROLLBACK") if @db.transaction_active?
+-      return batch.reject(error)
++      return batch.finish(error)
+     end
+-    batch.resolve(true)
++    batch.finish(true)
+     checkpoint! if @checkpoint_due
+   end
+ 
+diff --git a/http.rb b/http.rb
+index 617ed67b6fa1ed66138adc83f6914bb23f1f9153..58a5c2015a354d3cad009494a86da0b2ba670d98 100644
+--- a/http.rb
++++ b/http.rb
+@@ -141,15 +141,18 @@ class HTTPServer
+     @task.async { work }
+   end
+ 
++  # `while`, not `loop`: a block's `break`/`return` is a throw and `loop` pushes a frame per request.
+   def work
+     io_buffer = IO::Buffer.new(READ_SIZE)
+-    loop do
+-      @waiting += 1
+-      fd = @ready.pop
+-      @waiting -= 1
+-      service(fd, io_buffer)
+-    rescue StandardError => error
+-      Console.error(self, error)
++    while true
++      begin
++        @waiting += 1
++        fd = @ready.pop
++        @waiting -= 1
++        service(fd, io_buffer)
++      rescue StandardError => error
++        Console.error(self, error)
++      end
+     end
+   end
+ 
+@@ -164,10 +167,10 @@ class HTTPServer
+   def service(fd, io_buffer)
+     socket = @sockets[fd] or return
+     wait = true
+-    loop do
++    while true
+       @state[fd] = BUSY
+       buffer = @partial.delete(fd)
+-      loop do
++      while true
+         data = if wait
+                  wait = false
+                  length = Fiber.scheduler.io_read(socket, io_buffer, 1, 0)

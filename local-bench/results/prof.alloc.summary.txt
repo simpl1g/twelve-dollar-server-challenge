@@ -1,0 +1,177 @@
+allocation samples: 21439 (weight 21439), interval n/a
+
+== allocating class
+100.0%  22.30 obj/req  Object
+
+== leaf frame (self)
+ 17.9%   4.00 obj/req  HTTPServer#drain
+ 13.6%   3.03 obj/req  String.new
+  9.3%   2.08 obj/req  IO#write
+  9.2%   2.04 obj/req  String#scan
+  8.6%   1.91 obj/req  HTTPServer#service
+  6.1%   1.35 obj/req  App#call
+  4.8%   1.07 obj/req  Integer#to_s
+  4.4%   0.99 obj/req  IO::Buffer#get_string
+  4.2%   0.95 obj/req  Extralite::Query#next
+  3.8%   0.84 obj/req  App#authenticate
+  2.2%   0.50 obj/req  JSON::Ext::ParserConfig#parse
+  2.1%   0.46 obj/req  Extralite::Query#bind
+  1.8%   0.41 obj/req  Regexp.last_match
+  1.6%   0.36 obj/req  Class#new
+  1.2%   0.26 obj/req  Async::Promise#initialize
+  1.1%   0.25 obj/req  Fiber#initialize
+  0.9%   0.21 obj/req  String#*
+  0.9%   0.19 obj/req  String#tr
+  0.8%   0.19 obj/req  Async::Task#initialize
+  0.8%   0.19 obj/req  String#unpack1
+  0.7%   0.16 obj/req  App#like
+  0.6%   0.13 obj/req  Kernel#Async
+  0.4%   0.09 obj/req  Time.now
+  0.4%   0.09 obj/req  String#b
+  0.4%   0.09 obj/req  String#byteslice
+  0.3%   0.08 obj/req  Store#begin_batch
+  0.3%   0.07 obj/req  Extralite::Query#execute
+  0.3%   0.07 obj/req  Async::Task#schedule
+  0.3%   0.07 obj/req  Fiber::Annotation#initialize
+  0.3%   0.06 obj/req  Async::Task#async
+
+== leaf site
+ 13.6%   3.03 obj/req  String.new @ <cfunc>:0
+  9.3%   2.08 obj/req  IO#write @ <cfunc>:0
+  9.2%   2.04 obj/req  String#scan @ <cfunc>:0
+  4.8%   1.07 obj/req  Integer#to_s @ <cfunc>:0
+  4.7%   1.04 obj/req  HTTPServer#drain @ http.rb:226
+  4.5%   1.00 obj/req  HTTPServer#drain @ http.rb:233
+  4.4%   0.99 obj/req  IO::Buffer#get_string @ <cfunc>:0
+  4.3%   0.97 obj/req  HTTPServer#drain @ http.rb:239
+  4.3%   0.97 obj/req  HTTPServer#drain @ http.rb:230
+  4.3%   0.96 obj/req  HTTPServer#service @ http.rb:182
+  4.2%   0.95 obj/req  HTTPServer#service @ http.rb:192
+  4.2%   0.95 obj/req  Extralite::Query#next @ <cfunc>:0
+  2.2%   0.50 obj/req  JSON::Ext::ParserConfig#parse @ <cfunc>:0
+  2.2%   0.49 obj/req  App#call @ app.rb:208
+  2.1%   0.46 obj/req  Extralite::Query#bind @ <cfunc>:0
+  2.0%   0.44 obj/req  App#call @ app.rb:210
+  1.8%   0.41 obj/req  Regexp.last_match @ <cfunc>:0
+  1.8%   0.40 obj/req  App#call @ app.rb:196
+  1.6%   0.36 obj/req  Class#new @ <cfunc>:0
+  1.1%   0.25 obj/req  Fiber#initialize @ <cfunc>:0
+  0.9%   0.21 obj/req  String#* @ <cfunc>:0
+  0.9%   0.19 obj/req  String#tr @ <cfunc>:0
+  0.8%   0.19 obj/req  String#unpack1 @ <internal:pack>:38
+  0.8%   0.17 obj/req  App#authenticate @ app.rb:277
+  0.7%   0.16 obj/req  App#like @ app.rb:257
+  0.6%   0.14 obj/req  Async::Promise#initialize @ promise.rb:33
+  0.6%   0.13 obj/req  Kernel#Async @ async.rb:27
+  0.5%   0.12 obj/req  Async::Promise#initialize @ promise.rb:32
+  0.5%   0.12 obj/req  Async::Task#initialize @ task.rb:85
+  0.5%   0.11 obj/req  App#authenticate @ app.rb:288
+
+== nearest Ruby frame:line
+ 13.6%   3.03 obj/req  http.rb:286 (HTTPServer#respond)
+ 13.5%   3.01 obj/req  http.rb:239 (HTTPServer#drain)
+  9.3%   2.08 obj/req  http.rb:293 (HTTPServer#write)
+  4.7%   1.04 obj/req  http.rb:226 (HTTPServer#drain)
+  4.5%   1.00 obj/req  http.rb:233 (HTTPServer#drain)
+  4.4%   0.99 obj/req  http.rb:287 (HTTPServer#respond)
+  4.4%   0.99 obj/req  http.rb:174 (HTTPServer#service)
+  4.3%   0.97 obj/req  http.rb:230 (HTTPServer#drain)
+  4.3%   0.96 obj/req  http.rb:182 (HTTPServer#service)
+  4.2%   0.95 obj/req  http.rb:192 (HTTPServer#service)
+  4.2%   0.93 obj/req  app.rb:70 (Store#post)
+  2.2%   0.50 obj/req  common.rb:869 (JSON::Coder#load)
+  2.2%   0.49 obj/req  app.rb:208 (App#call)
+  2.1%   0.46 obj/req  app.rb:63 (Store#feed)
+  2.0%   0.44 obj/req  app.rb:210 (App#call)
+  1.8%   0.40 obj/req  app.rb:196 (App#call)
+  1.1%   0.25 obj/req  annotation.rb:15 (Fiber::Annotation#initialize)
+  1.1%   0.24 obj/req  app.rb:257 (App#like)
+  1.0%   0.22 obj/req  http.rb:241 (HTTPServer#drain)
+  0.9%   0.21 obj/req  task.rb:526 (Async::Task#schedule)
+  0.9%   0.21 obj/req  app.rb:326 (App#decode64)
+  0.9%   0.20 obj/req  http.rb:240 (HTTPServer#drain)
+  0.9%   0.19 obj/req  app.rb:325 (App#decode64)
+  0.8%   0.19 obj/req  <internal:pack>:38 (String#unpack1)
+  0.8%   0.18 obj/req  app.rb:287 (App#authenticate)
+  0.8%   0.17 obj/req  app.rb:277 (App#authenticate)
+  0.7%   0.15 obj/req  task.rb:250 (Async::Task#async)
+  0.6%   0.14 obj/req  promise.rb:33 (Async::Promise#initialize)
+  0.6%   0.13 obj/req  async.rb:27 (Kernel#Async)
+  0.5%   0.12 obj/req  promise.rb:32 (Async::Promise#initialize)
+
+== class <- Ruby site
+ 13.6%   3.03 obj/req  Object <- http.rb:286 (HTTPServer#respond)
+ 13.5%   3.01 obj/req  Object <- http.rb:239 (HTTPServer#drain)
+  9.3%   2.08 obj/req  Object <- http.rb:293 (HTTPServer#write)
+  4.7%   1.04 obj/req  Object <- http.rb:226 (HTTPServer#drain)
+  4.5%   1.00 obj/req  Object <- http.rb:233 (HTTPServer#drain)
+  4.4%   0.99 obj/req  Object <- http.rb:287 (HTTPServer#respond)
+  4.4%   0.99 obj/req  Object <- http.rb:174 (HTTPServer#service)
+  4.3%   0.97 obj/req  Object <- http.rb:230 (HTTPServer#drain)
+  4.3%   0.96 obj/req  Object <- http.rb:182 (HTTPServer#service)
+  4.2%   0.95 obj/req  Object <- http.rb:192 (HTTPServer#service)
+  4.2%   0.93 obj/req  Object <- app.rb:70 (Store#post)
+  2.2%   0.50 obj/req  Object <- common.rb:869 (JSON::Coder#load)
+  2.2%   0.49 obj/req  Object <- app.rb:208 (App#call)
+  2.1%   0.46 obj/req  Object <- app.rb:63 (Store#feed)
+  2.0%   0.44 obj/req  Object <- app.rb:210 (App#call)
+  1.8%   0.40 obj/req  Object <- app.rb:196 (App#call)
+  1.1%   0.25 obj/req  Object <- annotation.rb:15 (Fiber::Annotation#initialize)
+  1.1%   0.24 obj/req  Object <- app.rb:257 (App#like)
+  1.0%   0.22 obj/req  Object <- http.rb:241 (HTTPServer#drain)
+  0.9%   0.21 obj/req  Object <- task.rb:526 (Async::Task#schedule)
+  0.9%   0.21 obj/req  Object <- app.rb:326 (App#decode64)
+  0.9%   0.20 obj/req  Object <- http.rb:240 (HTTPServer#drain)
+  0.9%   0.19 obj/req  Object <- app.rb:325 (App#decode64)
+  0.8%   0.19 obj/req  Object <- <internal:pack>:38 (String#unpack1)
+  0.8%   0.18 obj/req  Object <- app.rb:287 (App#authenticate)
+  0.8%   0.17 obj/req  Object <- app.rb:277 (App#authenticate)
+  0.7%   0.15 obj/req  Object <- task.rb:250 (Async::Task#async)
+  0.6%   0.14 obj/req  Object <- promise.rb:33 (Async::Promise#initialize)
+  0.6%   0.13 obj/req  Object <- async.rb:27 (Kernel#Async)
+  0.5%   0.12 obj/req  Object <- promise.rb:32 (Async::Promise#initialize)
+
+== total (inclusive) by function
+ 99.7%  22.24 obj/req  Kernel#loop
+ 99.7%  22.24 obj/req  Async::Task#run
+ 99.7%  22.24 obj/req  Async::Task#schedule
+ 99.7%  22.23 obj/req  HTTPServer#work
+ 99.7%  22.23 obj/req  HTTPServer#add_worker
+ 99.7%  22.22 obj/req  HTTPServer#service
+ 86.6%  19.32 obj/req  HTTPServer#drain
+ 30.3%   6.76 obj/req  CountingApp#call
+ 30.3%   6.76 obj/req  App#call
+ 27.4%   6.10 obj/req  HTTPServer#respond
+ 13.6%   3.03 obj/req  String.new
+ 11.0%   2.45 obj/req  String#scan
+  9.3%   2.08 obj/req  HTTPServer#write
+  9.3%   2.08 obj/req  IO#write
+  9.3%   2.07 obj/req  App#authenticate
+  7.2%   1.61 obj/req  App#like
+  6.6%   1.47 obj/req  Store#begin_batch
+  6.1%   1.37 obj/req  Store#like
+  5.9%   1.33 obj/req  Kernel#Async
+  5.1%   1.13 obj/req  Async::Task#async
+  4.8%   1.07 obj/req  Integer#to_s
+  4.5%   1.00 obj/req  Class#new
+  4.4%   0.99 obj/req  IO::Buffer#get_string
+  4.2%   0.95 obj/req  Extralite::Query#next
+  4.2%   0.93 obj/req  Store#post
+  3.4%   0.76 obj/req  App#parse_segment
+  2.6%   0.58 obj/req  App#decode64
+  2.2%   0.50 obj/req  JSON::Coder#load
+  2.2%   0.50 obj/req  JSON::Ext::ParserConfig#parse
+  2.1%   0.47 obj/req  App#create
+
+== self by file
+ 57.7%  12.87 obj/req  <cfunc>
+ 26.5%   5.91 obj/req  http.rb
+ 10.9%   2.44 obj/req  app.rb
+  1.4%   0.32 obj/req  task.rb
+  1.2%   0.26 obj/req  promise.rb
+  0.8%   0.19 obj/req  <internal:pack>
+  0.6%   0.13 obj/req  async.rb
+  0.4%   0.09 obj/req  <internal:timev>
+  0.3%   0.07 obj/req  annotation.rb
+  0.1%   0.01 obj/req  timers.rb
+  0.0%   0.01 obj/req  <internal:thread_sync>

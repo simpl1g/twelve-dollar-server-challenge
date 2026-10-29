@@ -1,0 +1,1 @@
+{"name":"ref-v06-base","image":"tdsc-cicloid:base","users":20000,"seconds":60,"requests":126802,"rps":2113.367,"error_rate":0,"p50_ms":0.872,"p95_ms":4.411,"p99_ms":18.332,"event_loop_delay_ms":39.416,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":1,"server_cpu_pct":12.1,"us_per_req":56.5,"server_peak_mem_mb":178}

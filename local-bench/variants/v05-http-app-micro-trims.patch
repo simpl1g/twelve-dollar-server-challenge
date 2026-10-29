@@ -1,0 +1,293 @@
+diff --git a/README.md b/README.md
+index 9202e9b62bb3600f56ef95a0ada70b5e5549424a..2cfa0674f76b97faa7b55f074e57deb3fb7210f3 100644
+--- a/README.md
++++ b/README.md
+@@ -37,9 +37,17 @@ version keeps the Async reactor and replaces the HTTP server.
+ - **A minimal HTTP/1.1 parser.** It reads the request line and the four headers the API uses:
+   `Content-Length`, `Transfer-Encoding`, `Connection` and `Authorization`. It supports keep-alive,
+   pipelining, partial reads, HTTP/1.0 and `Connection: close`. Chunked request bodies get a 411.
+-  Response heads are prebuilt frozen strings. The header regex takes each value greedily and trims
+-  trailing blanks afterwards: the lazy form with a lookahead backtracked along the 200-byte bearer
+-  token and cost 5.7 µs per POST head against 2.9 µs now.
++  Response heads are prebuilt frozen strings, and each response is assembled with one string
++  interpolation (`String.new(capacity:)` cost two extra allocations per response). The header
++  lines are walked byte by byte with `byteindex`: a name is matched by length and first letter
++  before anything is sliced, so a GET carrying `Host`, `User-Agent` and `Accept-Encoding` allocates
++  nothing for its headers, and a POST head with a 200-byte bearer token takes about 1 µs against
++  6 µs for the regex scan it replaces (18 objects down to 9). Names are case-insensitive, blanks
++  before the colon and around the value are ignored, and lines without a colon are skipped. The
++  colon search is memoized across lines, so a head made of colon-less lines in front of a large
++  body scans the buffer once. A bare CR or LF inside a header line is now rejected (the whole line
++  is the value, so such a `Content-Length` gets a 400) where the regex silently cut the value
++  short; that is the RFC 9112 reading, and no HTTP client sends one.
+ - **YJIT is warm before the first request.** `start.sh` sets `--yjit-call-threshold=5` (default 30),
+   and at startup the server runs the feed, a single post, a JWT verification with a body parse, and a
+   like with an invalid id 50 times each through its own parser and app over a socket pair, so the
+@@ -71,10 +79,21 @@ version keeps the Async reactor and replaces the HTTP server.
+   faster.
+ - **One thread, and SQLite never releases the GVL.** Every query is an index lookup that takes
+   microseconds, so releasing and reacquiring the GVL would cost more than it saves.
+-- **JWT verified on every request**, with no caching (rule 5). libsodium's one-shot HMAC-SHA256 takes
+-  1.6 µs, compared with 3.5 µs through OpenSSL's HMAC in Ruby, and signatures are compared in
+-  constant time. The standard `{"alg":"HS256","typ":"JWT"}` header is compared as a string, and any
+-  other header is parsed and must say `HS256`. `exp`, `nbf`, `sub` and `username` are checked.
++- **JWT verified on every request**, with no caching (rule 5). The keyed HMAC-SHA256 state (the
++  secret's inner and outer pads, 208 bytes) is computed once at startup from `JWT_SECRET`; each
++  verification copies it and runs libsodium's `update` and `final` over the signing input, 1.1 µs
++  against 1.6 µs for the one-shot call (3.5 µs through OpenSSL's HMAC in Ruby). Every token's MAC
++  is computed and compared in constant time with `crypto_verify_32`. The token is checked once for
++  characters outside the base64url alphabet (`+`, `/`, `=`), and the strict decoder
++  (`unpack1("m0")`) rejects everything else the previous per-segment regex did, so the 43-character
++  signature always decodes to exactly 32 bytes. The standard `{"alg":"HS256","typ":"JWT"}` header
++  is compared as a string, and any other header is parsed and must say `HS256`. `exp`, `nbf`, `sub`
++  and `username` are checked.
++- **Trimming a post body skips the regex when it can.** Every character in JavaScript's
++  `String#trim` set is ASCII below 0x21 or a multibyte sequence, so a body whose first and last
++  bytes are printable ASCII has nothing to trim and the `gsub` (11.5 µs on a 500-character body) is
++  skipped. The single-post lookup also drops a redundant `reset`: extralite's `Query#bind` resets
++  the statement itself (the reset after the row is read stays, so no read transaction outlives it).
+ - **Likes in one statement**: `INSERT ... SELECT ... WHERE EXISTS (post) ON CONFLICT DO NOTHING`. A
+   post-existence check runs only when nothing was inserted, to tell "already liked" from "no such post".
+ - **Direct instead of Nginx.** On one core, Nginx's CPU comes out of Ruby's budget, and the provided
+diff --git a/app.rb b/app.rb
+index 16920d847804f7d271d50453734da43c1c27399a..955e5fa7202d527ed264ea42b5f35ce8b9a2f64b 100644
+--- a/app.rb
++++ b/app.rb
+@@ -6,12 +6,17 @@ require "extralite"
+ require "json"
+ require "rbnacl"
+ 
+-# libsodium's one-shot HMAC-SHA256 and constant-time compare, bound through rbnacl's FFI layer.
++# libsodium's HMAC-SHA256 (one-shot for the warm-up; keyed state, update and final for requests) and
++# constant-time compare, bound through rbnacl's FFI layer. The raw functions return 0 on success.
+ module Sodium
+   extend RbNaCl::Sodium
+ 
+   sodium_function :hmac_sha256, :crypto_auth_hmacsha256, %i[pointer pointer ulong_long pointer]
+-  sodium_function :verify32, :crypto_verify_32, %i[pointer pointer]
++  attach_function :crypto_auth_hmacsha256_statebytes, [], :size_t
++  attach_function :crypto_auth_hmacsha256_init, %i[pointer pointer size_t], :int
++  attach_function :crypto_auth_hmacsha256_update, %i[pointer pointer ulong_long], :int
++  attach_function :crypto_auth_hmacsha256_final, %i[pointer pointer], :int
++  attach_function :crypto_verify_32, %i[pointer pointer], :int
+ end
+ 
+ # One SQLite connection, owned by the single reactor thread. SQLite renders every response
+@@ -67,7 +72,7 @@ class Store
+   end
+ 
+   def post(id)
+-    document = @post.reset.bind(id).next
++    document = @post.bind(id).next # Query#bind resets the statement itself
+     @post.reset
+     @batch&.wait
+     document
+@@ -147,7 +152,7 @@ end
+ # The API: routes a parsed request and returns [status, json_document]. Transport-free.
+ class App
+   HS256_HEADER = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" # {"alg":"HS256","typ":"JWT"}
+-  BASE64URL = /\A[A-Za-z0-9_-]+\z/
++  NOT_BASE64URL = /[+\/=]/ # the strict decoder rejects every other byte outside the alphabet
+   POSTS_PREFIX = "/posts/"
+   LIKE_SUFFIX = "/like"
+   POSITIVE_ID = /\A[0-9]+\z/
+@@ -186,7 +191,15 @@ class App
+     @key = secret.b.ljust(32, "\0") # HMAC zero-pads keys up to the block size: same MAC
+     raise ArgumentError, "JWT_SECRET longer than 32 bytes is not supported" if @key.bytesize > 32
+ 
+-    @mac = String.new("\0" * 32, encoding: Encoding::BINARY)
++    # The keyed HMAC state (the secret's inner and outer pads) is computed once and every
++    # verification starts from a copy of it. It derives from JWT_SECRET alone: no token is kept.
++    size = Sodium.crypto_auth_hmacsha256_statebytes
++    template = FFI::MemoryPointer.new(size)
++    raise "crypto_auth_hmacsha256_init failed" unless Sodium.crypto_auth_hmacsha256_init(template, @key, @key.bytesize).zero?
++
++    @hmac_template = template.get_bytes(0, size)
++    @hmac_state = FFI::MemoryPointer.new(size)
++    @mac = FFI::MemoryPointer.new(32)
+     @started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+   end
+ 
+@@ -245,7 +258,11 @@ class App
+     body = payload["body"] if payload.is_a?(Hash)
+     raise Halt.new(400, BODY_REQUIRED) unless body.is_a?(String)
+ 
+-    body = body.gsub(TRIM, "")
++    # Printable ASCII at both ends proves there is nothing to trim: every character in SPACE is
++    # ASCII below 0x21 or a multibyte sequence (first byte >= 0xC2, last byte 0x80-0xBF).
++    first = body.getbyte(0)
++    last = body.getbyte(-1)
++    body = body.gsub(TRIM, "") unless first && first.between?(0x21, 0x7E) && last.between?(0x21, 0x7E)
+     raise Halt.new(400, BODY_REQUIRED) if body.empty?
+     raise Halt.new(400, BODY_TOO_LONG) if body.length > 500
+ 
+@@ -274,29 +291,28 @@ class App
+   def authenticate(header)
+     raise Halt.new(401, MISSING_TOKEN) unless header&.start_with?("Bearer ")
+ 
+-    token = header.byteslice(7, header.bytesize - 7)
+-    first = token.index(".")
+-    last = token.rindex(".")
+-    raise Halt.new(401, INVALID_TOKEN) unless first && first != last
+-
+-    head = token.byteslice(0, first)
+-    payload = token.byteslice(first + 1, last - first - 1)
+-    signature = token.byteslice(last + 1, token.bytesize - last - 1)
+-    raise Halt.new(401, INVALID_TOKEN) unless signature.bytesize == 43 && BASE64URL.match?(signature)
++    first = header.byteindex(".", 7)
++    last = header.byterindex(".")
++    raise Halt.new(401, INVALID_TOKEN) unless first && first != last && header.bytesize - last - 1 == 43
++    raise Halt.new(401, INVALID_TOKEN) if header.match?(NOT_BASE64URL, 7)
+ 
+-    signing_input = token.byteslice(0, last).b
+-    Sodium.hmac_sha256(@mac, signing_input, signing_input.bytesize, @key)
+-    raise Halt.new(401, INVALID_TOKEN) unless Sodium.verify32(@mac, decode64(signature))
++    signing_input = header.byteslice(7, last - 7)
++    @hmac_state.put_bytes(0, @hmac_template)
++    Sodium.crypto_auth_hmacsha256_update(@hmac_state, signing_input, signing_input.bytesize)
++    Sodium.crypto_auth_hmacsha256_final(@hmac_state, @mac)
++    signature = decode64(header.byteslice(last + 1, 43))
++    raise Halt.new(401, INVALID_TOKEN) unless signature.bytesize == 32 && Sodium.crypto_verify_32(@mac, signature).zero?
+ 
++    head = header.byteslice(7, first - 7)
+     unless head == HS256_HEADER
+       fields = parse_segment(head)
+       raise Halt.new(401, INVALID_TOKEN) unless fields.is_a?(Hash) && fields["alg"] == "HS256"
+     end
+ 
+-    claims = parse_segment(payload)
++    claims = parse_segment(header.byteslice(first + 1, last - first - 1))
+     raise Halt.new(401, INVALID_TOKEN) unless claims.is_a?(Hash)
+ 
+-    now = Time.now.to_f
++    now = Process.clock_gettime(Process::CLOCK_REALTIME)
+     exp = claims["exp"]
+     raise Halt.new(401, INVALID_TOKEN) unless exp.is_a?(Numeric) && exp > now
+ 
+@@ -314,16 +330,20 @@ class App
+   end
+ 
+   def parse_segment(segment)
+-    raise Halt.new(401, INVALID_TOKEN) unless BASE64URL.match?(segment) && segment.bytesize % 4 != 1
+-
+     CODER.load(decode64(segment)) # a BINARY source is read as UTF-8
+   rescue JSON::ParserError, ArgumentError, EncodingError
+     raise Halt.new(401, INVALID_TOKEN)
+   end
+ 
++  # Strict base64url: the padding follows from the length (1 mod 4 is never valid) and `m0` rejects
++  # any byte outside the alphabet, misplaced padding and non-zero trailing bits.
+   def decode64(segment)
+     padded = segment.tr("-_", "+/")
+-    padded << ("=" * (-segment.bytesize % 4))
++    case segment.bytesize % 4
++    when 2 then padded << "=="
++    when 3 then padded << "="
++    when 1 then raise Halt.new(401, INVALID_TOKEN)
++    end
+     padded.unpack1("m0")
+   rescue ArgumentError
+     raise Halt.new(401, INVALID_TOKEN)
+diff --git a/http.rb b/http.rb
+index 617ed67b6fa1ed66138adc83f6914bb23f1f9153..40f81935db13602154a786640b7e5ac000f07e37 100644
+--- a/http.rb
++++ b/http.rb
+@@ -34,11 +34,14 @@ class HTTPServer
+   CLOSE = heads("connection: close\r\n")
+   END_HEAD = "\r\n\r\n"
+   CRLF = "\r\n"
+-  # The only request headers the API needs. Names are told apart by length. The value is taken
+-  # greedily and trailing blanks are trimmed afterwards: a lazy `[^\r\n]*?` with a lookahead
+-  # backtracks along a 200-byte bearer token and took 5.7 µs on a POST head, against 2.9 µs now.
+-  HEADER = /\r\n(content-length|transfer-encoding|connection|authorization)[ \t]*:[ \t]*([^\r\n]*)/i
+-  TRAILING_BLANKS = /[ \t]+\z/
++  COLON = ":"
++  # The only request headers the API needs. `drain` walks the header lines byte by byte and tells
++  # the names apart by length and first letter before it slices anything, so a GET with Host,
++  # User-Agent and Accept-Encoding allocates nothing for its headers.
++  CONTENT_LENGTH = "content-length"
++  TRANSFER_ENCODING = "transfer-encoding"
++  CONNECTION = "connection"
++  AUTHORIZATION = "authorization"
+   DIGITS = /\A[0-9]+\z/
+   CLOSE_TOKEN = /\bclose\b/i
+   KEEP_ALIVE_TOKEN = /\bkeep-alive\b/i
+@@ -235,26 +238,47 @@ class HTTPServer
+       length = 0
+       authorization = nil
+       close = http10
+-      if line_end < head_end
+-        buffer.byteslice(line_end, head_end - line_end).scan(HEADER) do
+-          name = Regexp.last_match(1)
+-          value = Regexp.last_match(2)
+-          value = value.sub(TRAILING_BLANKS, "") if value.end_with?(" ", "\t")
+-          case name.bytesize
+-          when 14 # content-length
+-            return reject(socket, 400) unless DIGITS.match?(value)
+-
+-            length = value.to_i
+-          when 17 # transfer-encoding: request bodies must use Content-Length
+-            return reject(socket, 411)
+-          when 10 # connection
+-            if CLOSE_TOKEN.match?(value) then close = true
+-            elsif http10 && KEEP_ALIVE_TOKEN.match?(value) then close = false
++      pos = line_end + 2
++      colon = -1
++      while pos < head_end
++        eol = buffer.byteindex(CRLF, pos)
++        # The colon found is reused until the lines catch up with it; when none is left, head_end
++        # stands in, so one drain scans the buffer for a colon at most once.
++        colon = buffer.byteindex(COLON, pos) || head_end if colon < pos
++        if colon < eol
++          name_end = colon
++          name_end -= 1 while name_end > pos && ((b = buffer.getbyte(name_end - 1)) == 32 || b == 9)
++          name_len = name_end - pos
++          letter = buffer.getbyte(pos) | 0x20
++          if (name_len == 14 && letter == 0x63) || (name_len == 17 && letter == 0x74) ||
++             (name_len == 10 && letter == 0x63) || (name_len == 13 && letter == 0x61)
++            v0 = colon + 1
++            v0 += 1 while v0 < eol && ((b = buffer.getbyte(v0)) == 32 || b == 9)
++            v1 = eol
++            v1 -= 1 while v1 > v0 && ((b = buffer.getbyte(v1 - 1)) == 32 || b == 9)
++            value = buffer.byteslice(v0, v1 - v0)
++            name = buffer.byteslice(pos, name_len)
++            case name_len
++            when 14 # content-length
++              if name.casecmp?(CONTENT_LENGTH)
++                return reject(socket, 400) unless DIGITS.match?(value)
++
++                length = value.to_i
++              end
++            when 17 # transfer-encoding: request bodies must use Content-Length
++              return reject(socket, 411) if name.casecmp?(TRANSFER_ENCODING)
++            when 10 # connection
++              if name.casecmp?(CONNECTION)
++                if CLOSE_TOKEN.match?(value) then close = true
++                elsif http10 && KEEP_ALIVE_TOKEN.match?(value) then close = false
++                end
++              end
++            else # authorization
++              authorization = value if name.casecmp?(AUTHORIZATION)
+             end
+-          else # authorization
+-            authorization = value
+           end
+         end
++        pos = eol + 2
+       end
+       return reject(socket, 413) if length > MAX_BODY
+ 
+@@ -281,11 +305,9 @@ class HTTPServer
+     nil
+   end
+ 
++  # One interpolation: `String.new` with a keyword argument cost two extra allocations per response.
+   def respond(socket, heads, status, document)
+-    head = heads[status] || heads[500]
+-    out = String.new(head, capacity: head.bytesize + 8 + document.bytesize)
+-    out << document.bytesize.to_s << END_HEAD << document
+-    write(socket, out)
++    write(socket, "#{heads[status] || heads[500]}#{document.bytesize}\r\n\r\n#{document}")
+   end
+ 
+   # Through the fiber scheduler: with io_uring, every worker's write is queued and submitted together.

@@ -1,0 +1,1 @@
+{"name":"final-20k-2-B","image":"tdsc-cicloid:base","users":20000,"seconds":60,"requests":126811,"rps":2113.517,"error_rate":0,"p50_ms":0.941,"p95_ms":2.888,"p99_ms":8.214,"event_loop_delay_ms":29.812,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":14.9,"us_per_req":69.7,"server_peak_mem_mb":213}

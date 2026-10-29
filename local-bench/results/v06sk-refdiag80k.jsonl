@@ -1,0 +1,1 @@
+{"name":"v06sk-refdiag80k","image":"tdsc-cicloid:v06-skeptic-refdiag","users":80000,"seconds":60,"requests":506651,"rps":8444.183,"error_rate":0,"p50_ms":2.411,"p95_ms":13.943,"p99_ms":131.547,"event_loop_delay_ms":42.343,"peak_connections":65712,"connects":167004,"retired_connections":101735,"pass":true,"procs":1,"server_cpu_pct":35,"us_per_req":41.5,"server_peak_mem_mb":391}

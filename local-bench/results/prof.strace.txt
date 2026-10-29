@@ -1,0 +1,22 @@
+strace: Process 1 attached with 2 threads
+strace: Process 10 detached
+strace: Process 1 detached
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+ 70.65    0.452724          62      7252         3 epoll_pwait
+ 21.62    0.138526           7     17806        80 io_uring_enter
+  3.83    0.024540           1     24222           pwrite64
+  1.62    0.010410         173        60           fsync
+  1.24    0.007969           1      4210           pread64
+  0.59    0.003802           1      2478           madvise
+  0.26    0.001674           0      2723        11 rt_sigreturn
+  0.09    0.000546          13        40           ftruncate
+  0.03    0.000210           0       326           mprotect
+  0.02    0.000107           0       330           clock_gettime
+  0.02    0.000100           5        20           mremap
+  0.01    0.000063          15         4           mmap
+  0.01    0.000052           2        20           fstat
+  0.00    0.000028           7         4           munmap
+  0.00    0.000003           0         4         4 prctl
+------ ----------- ----------- --------- --------- ----------------
+100.00    0.640754          10     59499        98 total

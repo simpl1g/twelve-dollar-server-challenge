@@ -1,0 +1,10 @@
+server up after 2s
+{"name":"final2fix-c1-A","image":"tdsc-cicloid:stack5","users":80000,"seconds":120,"requests":1016416,"rps":8470.134,"error_rate":0,"p50_ms":1.075,"p95_ms":3.943,"p99_ms":18.238,"event_loop_delay_ms":51.068,"peak_connections":66001,"connects":262347,"retired_connections":197075,"pass":true,"procs":2,"server_cpu_pct":26,"us_per_req":30.6,"server_peak_mem_mb":462}
+{"progress_seconds":60,"requests":128022,"errors":0,"connections":32484,"connects":60786,"retired_connections":28314}
+{"progress_seconds":90,"requests":254034,"errors":0,"connections":32796,"connects":83939,"retired_connections":51144}
+{"progress_seconds":120,"requests":381716,"errors":0,"connections":32344,"connects":107243,"retired_connections":74905}
+pool workers=99 idle=67 backlog=0 open=65264 commits=30481 minor_gc=112 gc_ms=1010
+pool workers=104 idle=64 backlog=0 open=65237 commits=34206 minor_gc=121 gc_ms=1131
+pool workers=99 idle=67 backlog=0 open=65254 commits=37857 minor_gc=130 gc_ms=1260
+pool workers=99 idle=67 backlog=0 open=65272 commits=41501 minor_gc=140 gc_ms=1394
+pool workers=106 idle=74 backlog=0 open=65272 commits=45154 minor_gc=148 gc_ms=1545

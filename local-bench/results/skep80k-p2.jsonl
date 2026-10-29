@@ -1,0 +1,1 @@
+{"name":"skep80k-p2","image":"tdsc-cicloid:base","users":80000,"seconds":120,"requests":1016059,"rps":8467.159,"error_rate":0,"p50_ms":2.403,"p95_ms":22.412,"p99_ms":114.248,"event_loop_delay_ms":57.856,"peak_connections":66303,"connects":262153,"retired_connections":196880,"pass":true,"procs":2,"server_cpu_pct":37.4,"us_per_req":44,"server_peak_mem_mb":550}

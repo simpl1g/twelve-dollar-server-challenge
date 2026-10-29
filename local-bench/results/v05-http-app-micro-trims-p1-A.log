@@ -1,0 +1,7 @@
+server up after 2s
+{"name":"v05-http-app-micro-trims-p1-A","image":"tdsc-cicloid:base","users":20000,"seconds":60,"requests":126819,"rps":2113.65,"error_rate":0,"p50_ms":0.657,"p95_ms":2.036,"p99_ms":7.604,"event_loop_delay_ms":18.423,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":14.1,"us_per_req":65.9,"server_peak_mem_mb":211}
+{"progress_seconds":60,"requests":42268,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":30,"requests":10604,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":60,"requests":42230,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+/app/http.rb:145: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!
+listening on 0.0.0.0:3000 (141 iseqs compiled)

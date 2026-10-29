@@ -1,0 +1,10 @@
+server up after 2s
+{"name":"final2fix-k187-1-A","image":"tdsc-cicloid:stack5","users":187500,"seconds":300,"requests":5950750,"rps":19835.834000000003,"error_rate":0,"p50_ms":4.135,"p95_ms":39.511,"p99_ms":67.982,"event_loop_delay_ms":19.788,"peak_connections":67652,"connects":4124168,"retired_connections":4058904,"pass":true,"procs":3,"server_cpu_pct":63.4,"us_per_req":32,"server_peak_mem_mb":560}
+{"progress_seconds":240,"requests":1388618,"errors":0,"connections":21915,"connects":985075,"retired_connections":963178}
+{"progress_seconds":270,"requests":1587259,"errors":0,"connections":21633,"connects":1114467,"retired_connections":1092838}
+{"progress_seconds":300,"requests":1785469,"errors":0,"connections":21636,"connects":1243952,"retired_connections":1222316}
+pool workers=270 idle=76 backlog=0 open=65288 commits=101038 minor_gc=584 gc_ms=7892
+pool workers=260 idle=228 backlog=0 open=65279 commits=105012 minor_gc=604 gc_ms=8164
+pool workers=273 idle=64 backlog=0 open=65380 commits=109048 minor_gc=623 gc_ms=8438
+pool workers=299 idle=135 backlog=0 open=65270 commits=113015 minor_gc=642 gc_ms=8756
+pool workers=311 idle=134 backlog=0 open=65354 commits=116757 minor_gc=661 gc_ms=9031

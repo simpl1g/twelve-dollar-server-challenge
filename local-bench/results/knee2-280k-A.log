@@ -1,0 +1,10 @@
+server up after 2s
+{"name":"knee2-280k-A","image":"tdsc-cicloid:stack5","users":280000,"seconds":300,"requests":8496175,"rps":28320.583000000002,"error_rate":0.0008486171718449773,"p50_ms":166.670,"p95_ms":444.369,"p99_ms":1840.781,"event_loop_delay_ms":190.009,"peak_connections":108847,"connects":6854086,"retired_connections":6781559,"pass":false,"procs":5,"server_cpu_pct":93.2,"us_per_req":33.2,"server_peak_mem_mb":559}
+{"progress_seconds":270,"requests":1352122,"errors":1337,"connections":14045,"connects":1106664,"retired_connections":1091282}
+{"progress_seconds":300,"requests":1526806,"errors":1337,"connections":14816,"connects":1240937,"retired_connections":1224784}
+{"progress_seconds":330,"requests":1697217,"errors":1337,"connections":15563,"connects":1370607,"retired_connections":1353727}
+pool workers=558 idle=459 backlog=0 open=65305 commits=52484 minor_gc=833 gc_ms=11594
+pool workers=518 idle=444 backlog=0 open=65154 commits=54533 minor_gc=859 gc_ms=11960
+pool workers=598 idle=444 backlog=0 open=65242 commits=56387 minor_gc=885 gc_ms=12354
+pool workers=571 idle=163 backlog=0 open=65523 commits=58126 minor_gc=911 gc_ms=12748
+pool workers=702 idle=97 backlog=0 open=19341 commits=59544 minor_gc=930 gc_ms=13071

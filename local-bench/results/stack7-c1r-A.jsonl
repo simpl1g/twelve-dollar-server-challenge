@@ -1,0 +1,1 @@
+{"name":"stack7-c1r-A","image":"tdsc-cicloid:stack5","users":80000,"seconds":120,"requests":1016377,"rps":8469.808,"error_rate":0,"p50_ms":1.435,"p95_ms":11.869,"p99_ms":34.457,"event_loop_delay_ms":103.215,"peak_connections":66273,"connects":262316,"retired_connections":197037,"pass":true,"procs":2,"server_cpu_pct":31.4,"us_per_req":37,"server_peak_mem_mb":471}

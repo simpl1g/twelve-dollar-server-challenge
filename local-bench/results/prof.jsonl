@@ -1,0 +1,1 @@
+{"name":"prof","image":"tdsc-cicloid:prof","users":20000,"seconds":180,"requests":377025,"rps":2094.583,"error_rate":0,"p50_ms":0.843,"p95_ms":31.880,"p99_ms":4109.986,"event_loop_delay_ms":180.101,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":false,"procs":1,"server_cpu_pct":14.8,"us_per_req":70.4,"server_peak_mem_mb":1833}

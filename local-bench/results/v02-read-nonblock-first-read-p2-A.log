@@ -1,0 +1,7 @@
+server up after 2s
+{"name":"v02-read-nonblock-first-read-p2-A","image":"tdsc-cicloid:v02-read-nonblock-first-read","users":20000,"seconds":60,"requests":126826,"rps":2113.767,"error_rate":0,"p50_ms":0.688,"p95_ms":2.733,"p99_ms":12.662,"event_loop_delay_ms":65.110,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":14.3,"us_per_req":67.1,"server_peak_mem_mb":206}
+{"progress_seconds":60,"requests":42295,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":30,"requests":10600,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":60,"requests":42250,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+server.rb:42: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!
+listening on 0.0.0.0:3000 (139 iseqs compiled)

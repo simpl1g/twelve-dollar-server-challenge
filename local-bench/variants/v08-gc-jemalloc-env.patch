@@ -1,0 +1,39 @@
+diff --git a/README.md b/README.md
+index 9202e9b62bb3600f56ef95a0ada70b5e5549424a..c2791c17e6c9a44b768934e56b4a285ac310d2c8 100644
+--- a/README.md
++++ b/README.md
+@@ -82,6 +82,15 @@ version keeps the Async reactor and replaces the HTTP server.
+   descriptors of the process's file limit, so clients aren't forced to reconnect under normal load.
+ - **TCP_NODELAY is set on the listener** and inherited by accepted sockets on Linux, so there is
+   no `setsockopt` per connection.
++- **GC and allocator settings in `start.sh`** (rule 11 allows process-internal GC and allocator
++  settings). `RUBY_GC_HEAP_FREE_SLOTS_{MIN,GOAL,MAX}_RATIO=0.4/0.6/0.9` (defaults 0.2/0.4/0.65) and
++  `RUBY_GC_HEAP_OLDOBJECT_LIMIT_FACTOR=4.0` (default 2.0) keep more free slots after each GC and let
++  the old generation grow further before a major, so minor GCs roughly halve (99 to 49 per ~170k
++  requests with 20k idle connections) and majors drop from 7 to 5, for about 10 MB more peak RSS. The
++  malloc-limit knobs were measured and left out: they did not change the GC count here and cost
++  ~130 MB. `MALLOC_CONF=thp:always,metadata_thp:always` asks jemalloc to back its arenas with
++  transparent huge pages; it only does anything where `/sys/kernel/mm/transparent_hugepage/enabled` is
++  `madvise` (Ubuntu's default), so it is unmeasured on hosts where THP is `always` or `never`.
+ 
+ ## Results on a 1-vCPU test VM
+ 
+diff --git a/start.sh b/start.sh
+index 37a9b85ca5fb58618c50e2dc8d029e70e8ea0d7d..f636e4cc1c201902be0e85ea7ac1ce42b2fc1287 100755
+--- a/start.sh
++++ b/start.sh
+@@ -5,6 +5,14 @@ cd "$(dirname "$0")"
+ ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true
+ export PATH="/opt/ruby/bin:$PATH"
+ export RUBY_YJIT_ENABLE=1
++# Keep 40-90% of heap slots free after a GC (defaults 20-65%) and let old objects grow 4x (default 2x)
++# before a major: about half the minor GCs and fewer majors for ~10 MB more RSS. MIN < GOAL < MAX
++# must hold; Ruby silently ignores the ratios otherwise.
++export RUBY_GC_HEAP_FREE_SLOTS_MIN_RATIO=0.4 RUBY_GC_HEAP_FREE_SLOTS_GOAL_RATIO=0.6 \
++       RUBY_GC_HEAP_FREE_SLOTS_MAX_RATIO=0.9 RUBY_GC_HEAP_OLDOBJECT_LIMIT_FACTOR=4.0
++# jemalloc (linked into /opt/ruby) asks for transparent huge pages on its arenas and metadata. It is
++# a no-op unless /sys/kernel/mm/transparent_hugepage/enabled reads "madvise" (Ubuntu's default).
++export MALLOC_CONF="thp:always,metadata_thp:always"
+ # Compile after 5 calls instead of 30, so paths the startup warm-up doesn't cover (error responses,
+ # HTTP/1.0 clients) run compiled code almost at once.
+ exec bundle exec ruby --yjit --yjit-call-threshold=5 server.rb

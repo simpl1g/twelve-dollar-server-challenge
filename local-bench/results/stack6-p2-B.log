@@ -1,0 +1,10 @@
+server up after 2s
+{"name":"stack6-p2-B","image":"tdsc-cicloid:stack5","users":20000,"seconds":60,"requests":126815,"rps":2113.583,"error_rate":0,"p50_ms":0.648,"p95_ms":2.620,"p99_ms":9.342,"event_loop_delay_ms":32.095,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":11.7,"us_per_req":54.8,"server_peak_mem_mb":201}
+{"progress_seconds":60,"requests":42274,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":30,"requests":10603,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":60,"requests":42235,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+pool workers=64 idle=64 backlog=0 open=20000 commits=3422 minor_gc=37 gc_ms=167
+pool workers=64 idle=64 backlog=0 open=20000 commits=4716 minor_gc=44 gc_ms=192
+pool workers=64 idle=64 backlog=0 open=20000 commits=5973 minor_gc=51 gc_ms=216
+pool workers=64 idle=64 backlog=0 open=20000 commits=7219 minor_gc=58 gc_ms=242
+pool workers=64 idle=64 backlog=0 open=20000 commits=8497 minor_gc=64 gc_ms=280

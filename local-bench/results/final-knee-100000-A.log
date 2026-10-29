@@ -1,0 +1,7 @@
+server up after 2s
+{"name":"final-knee-100000-A","image":"tdsc-cicloid:base","users":100000,"seconds":300,"requests":3173026,"rps":10576.753,"error_rate":0,"p50_ms":3.086,"p95_ms":13.232,"p99_ms":31.017,"event_loop_delay_ms":67.533,"peak_connections":66824,"connects":1221025,"retired_connections":1155706,"pass":true,"procs":3,"server_cpu_pct":44.5,"us_per_req":42.1,"server_peak_mem_mb":525}
+{"progress_seconds":270,"requests":740704,"errors":0,"connections":21855,"connects":296071,"retired_connections":274216}
+{"progress_seconds":300,"requests":846737,"errors":0,"connections":21774,"connects":332980,"retired_connections":311206}
+{"progress_seconds":330,"requests":952582,"errors":0,"connections":21571,"connects":370209,"retired_connections":348638}
+/app/http.rb:145: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!
+listening on 0.0.0.0:3000 (141 iseqs compiled)

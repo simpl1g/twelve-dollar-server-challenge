@@ -1,0 +1,76 @@
+diff --git a/README.md b/README.md
+index 9202e9b62bb3600f56ef95a0ada70b5e5549424a..6b73969d95b522a641b85f009f32690eec23331e 100644
+--- a/README.md
++++ b/README.md
+@@ -57,6 +57,19 @@ version keeps the Async reactor and replaces the HTTP server.
+   The single-post query binds its id as `p.id=+?`: with a plain `?` in that join, SQLite treated the
+   plan as depending on the bound value and recompiled the statement on every request. The `+` keeps
+   the same plan and output and halves that query's time (14 to 7 µs).
++- **The feed aggregates without a sorter.** `/feed` is `group_concat` over a 20-row subquery that
++  already runs `ORDER BY created_at DESC, id DESC LIMIT 20` as a co-routine on
++  `posts_created_at_id_idx`. The earlier text repeated that `ORDER BY` inside `group_concat`, and
++  SQLite served it with a temp b-tree (`USE TEMP B-TREE FOR group_concat(ORDER BY)`): every feed
++  re-sorted 20 rows it had just received in order. Without it the plan is the same co-routine, 59
++  VDBE opcodes instead of 71, and the feed statement costs about 23 µs instead of 32 (feeds are 46%
++  of requests). The bytes are identical: ties on `created_at` are still broken by `id DESC` inside
++  the subquery, and an empty table still yields `{"posts":[]}`. SQLite documents `group_concat`
++  order as arbitrary without `ORDER BY`, so this relies on the co-routine delivery order of the
++  pinned SQLite 3.54.0 build and is enforced at boot: `Store#initialize` runs the new and the old
++  (sorted) text once, compares the documents and checks `EXPLAIN QUERY PLAN` for a temp b-tree; if
++  either check fails it warns and prepares the sorted text instead. Both boot documents are
++  discarded; nothing is cached across requests.
+ - **Group commit.** The first write in a reactor pass opens `BEGIN IMMEDIATE`, every write in that pass
+   joins the transaction, and one `COMMIT` runs on the next pass. No write response goes out before its
+   `COMMIT` returns, and reads that ran while a batch was open wait for it too. That gives one WAL
+diff --git a/app.rb b/app.rb
+index 16920d847804f7d271d50453734da43c1c27399a..e5096b53af7a60d8082d69b0b79e022b257e1a5d 100644
+--- a/app.rb
++++ b/app.rb
+@@ -23,9 +23,15 @@ end
+ class Store
+   POST_JSON = "json_object('id',p.id,'body',p.body,'created_at',p.created_at,'author',u.username," \
+               "'like_count',(SELECT count(*) FROM likes l WHERE l.post_id=p.id))"
+-  FEED = "SELECT '{\"posts\":['||coalesce(group_concat(doc,',' ORDER BY created_at DESC,id DESC),'')||']}' " \
+-         "FROM (SELECT #{POST_JSON} AS doc,p.created_at,p.id FROM posts p JOIN users u ON u.id=p.user_id " \
++  # No ORDER BY inside group_concat: the subquery's ORDER BY ... LIMIT 20 runs as a co-routine that
++  # hands rows over already sorted, so the aggregate's temp b-tree sorter was pure overhead.
++  FEED = "SELECT '{\"posts\":['||coalesce(group_concat(doc,','),'')||']}' " \
++         "FROM (SELECT #{POST_JSON} AS doc FROM posts p JOIN users u ON u.id=p.user_id " \
+          "ORDER BY p.created_at DESC,p.id DESC LIMIT 20)"
++  # The sorted text: compared against FEED once at boot, and used instead if the plans ever differ.
++  FEED_SORTED = "SELECT '{\"posts\":['||coalesce(group_concat(doc,',' ORDER BY created_at DESC,id DESC),'')||']}' " \
++                "FROM (SELECT #{POST_JSON} AS doc,p.created_at,p.id FROM posts p JOIN users u ON u.id=p.user_id " \
++                "ORDER BY p.created_at DESC,p.id DESC LIMIT 20)"
+   # `+?`, not `?`: with the join, SQLite's constant propagation makes the plan depend on the bound
+   # id, so every new id would recompile the statement (twice the cost of running it).
+   POST = "SELECT '{\"post\":'||#{POST_JSON}||'}' FROM posts p JOIN users u ON u.id=p.user_id WHERE p.id=+?"
+@@ -47,7 +53,7 @@ class Store
+     @db.execute("PRAGMA mmap_size=1073741824")
+     @db.execute("PRAGMA cache_size=-65536")
+     @db.execute("PRAGMA temp_store=MEMORY")
+-    @feed = @db.prepare_splat(FEED)
++    @feed = @db.prepare_splat(feed_sql)
+     @post = @db.prepare_splat(POST)
+     @create = @db.prepare_splat(CREATE)
+     @like = @db.prepare_splat(LIKE)
+@@ -111,6 +117,20 @@ class Store
+ 
+   private
+ 
++  # FEED relies on co-routine delivery order (pinned SQLite 3.54.0), not on an ORDER BY contract.
++  # Checked once at boot, both documents discarded; any difference falls back to the sorted text.
++  def feed_sql
++    if @db.query("EXPLAIN QUERY PLAN #{FEED}").any? { |row| row.values.join.include?("TEMP B-TREE") }
++      warn "feed plan uses a sorter: using sorted FEED"
++      FEED_SORTED
++    elsif @db.query_single_splat(FEED) != @db.query_single_splat(FEED_SORTED)
++      warn "feed plan drift: using sorted FEED"
++      FEED_SORTED
++    else
++      FEED
++    end
++  end
++
+   # Synchronous, so nothing else runs between BEGIN and joining the batch.
+   def begin_batch
+     return @batch if @batch

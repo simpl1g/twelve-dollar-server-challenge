@@ -1,0 +1,106 @@
+===== stackprof cpu: by SELF
+==================================
+  Mode: cpu(500)
+  Samples: 2136 (1.48% miss rate)
+  GC: 59 (2.76%)
+==================================
+     TOTAL    (pct)     SAMPLES    (pct)     FRAME
+       781  (36.6%)         781  (36.6%)     Extralite::Query#next
+       410  (19.2%)         407  (19.1%)     IO::Event::Selector::URing#select
+        77   (3.6%)          77   (3.6%)     Extralite::Database#execute
+        61   (2.9%)          61   (2.9%)     Extralite::Query#execute
+        89   (4.2%)          58   (2.7%)     IO#write
+        50   (2.3%)          50   (2.3%)     (sweeping)
+        52   (2.4%)          46   (2.2%)     String#scan
+        34   (1.6%)          34   (1.6%)     Integer#==
+        29   (1.4%)          29   (1.4%)     String#byteindex
+        28   (1.3%)          28   (1.3%)     IO::Event::Selector::URing#io_read
+        28   (1.3%)          28   (1.3%)     String.new
+        27   (1.3%)          27   (1.3%)     Extralite::Query#reset
+        24   (1.1%)          24   (1.1%)     IO::Event::Selector::URing#io_write
+       147   (6.9%)          24   (1.1%)     HTTPServer#respond
+      1334  (62.5%)          23   (1.1%)     HTTPServer#drain
+        22   (1.0%)          22   (1.0%)     Epoll.epoll_wait
+      1406  (65.8%)          20   (0.9%)     HTTPServer#service
+        19   (0.9%)          19   (0.9%)     JSON::Ext::ParserConfig#parse
+        18   (0.8%)          18   (0.8%)     Sodium.crypto_auth_hmacsha256
+        59   (2.8%)          16   (0.7%)     Thread::Queue#pop
+        16   (0.7%)          16   (0.7%)     IO::Event::Selector::URing#transfer
+      1480  (69.3%)          15   (0.7%)     HTTPServer#work
+        24   (1.1%)          15   (0.7%)     Thread::Queue#push
+        12   (0.6%)          12   (0.6%)     Regexp#match?
+        11   (0.5%)          11   (0.5%)     IO::Event::Selector::URing#resume
+      1081  (50.6%)          10   (0.5%)     App#call
+        77   (3.6%)          10   (0.5%)     App#authenticate
+         9   (0.4%)           9   (0.4%)     Extralite::Query#bind
+      1563  (73.2%)           9   (0.4%)     Kernel#loop
+         9   (0.4%)           9   (0.4%)     (marking)
+        23   (1.1%)           8   (0.4%)     Class#new
+        28   (1.3%)           8   (0.4%)     Thread::Mutex#synchronize
+         7   (0.3%)           7   (0.3%)     Fiber#initialize
+        10   (0.5%)           7   (0.3%)     IO::Event::Timers#flush!
+         7   (0.3%)           7   (0.3%)     IO::Event::Selector::URing#push
+        31   (1.5%)           7   (0.3%)     Async::Promise#wait
+        14   (0.7%)           6   (0.3%)     Thread::ConditionVariable#wait
+         6   (0.3%)           6   (0.3%)     String#==
+         6   (0.3%)           6   (0.3%)     Process.clock_gettime
+       452  (21.2%)           6   (0.3%)     Async::Scheduler#run_loop
+        44   (2.1%)           5   (0.2%)     Async::Task#async
+         4   (0.2%)           4   (0.2%)     IO::Buffer#get_string
+        34   (1.6%)           4   (0.2%)     App#create
+         4   (0.2%)           4   (0.2%)     Hash#delete
+         4   (0.2%)           4   (0.2%)     Fiber.current
+         7   (0.3%)           4   (0.2%)     Async::Task#finish!
+        31   (1.5%)           4   (0.2%)     Async::Scheduler#io_write
+         4   (0.2%)           4   (0.2%)     String#unpack1
+       439  (20.6%)           4   (0.2%)     Async::Scheduler#run_once!
+         4   (0.2%)           4   (0.2%)     Async::Promise#initialize
+
+===== stackprof cpu: by TOTAL
+==================================
+     TOTAL    (pct)     SAMPLES    (pct)     FRAME
+      1625  (76.1%)           2   (0.1%)     Async::Task#schedule
+      1617  (75.7%)           2   (0.1%)     Async::Task#run
+      1563  (73.2%)           9   (0.4%)     Kernel#loop
+      1480  (69.3%)          15   (0.7%)     HTTPServer#work
+      1480  (69.3%)           0   (0.0%)     HTTPServer#add_worker
+      1406  (65.8%)          20   (0.9%)     HTTPServer#service
+      1334  (62.5%)          23   (1.1%)     HTTPServer#drain
+      1082  (50.7%)           1   (0.0%)     CountingApp#call
+      1081  (50.6%)          10   (0.5%)     App#call
+       781  (36.6%)         781  (36.6%)     Extralite::Query#next
+       746  (34.9%)           0   (0.0%)     Store#feed
+       500  (23.4%)           1   (0.0%)     Kernel#Async
+       452  (21.2%)           0   (0.0%)     <main>
+       452  (21.2%)           0   (0.0%)     Fiber.blocking
+       452  (21.2%)           3   (0.1%)     Thread.handle_interrupt
+       452  (21.2%)           6   (0.3%)     Async::Scheduler#run_loop
+       452  (21.2%)           1   (0.0%)     Async::Scheduler#run
+       443  (20.7%)           1   (0.0%)     Async::Scheduler#run_once
+       439  (20.6%)           4   (0.2%)     Async::Scheduler#run_once!
+       410  (19.2%)         407  (19.1%)     IO::Event::Selector::URing#select
+       147   (6.9%)          24   (1.1%)     HTTPServer#respond
+       127   (5.9%)           2   (0.1%)     App#like
+       125   (5.9%)           0   (0.0%)     Store#like
+       110   (5.1%)           1   (0.0%)     Store#begin_batch
+        92   (4.3%)           3   (0.1%)     HTTPServer#write
+        89   (4.2%)          58   (2.7%)     IO#write
+        77   (3.6%)          10   (0.5%)     App#authenticate
+        77   (3.6%)           0   (0.0%)     Store#post
+        77   (3.6%)          77   (3.6%)     Extralite::Database#execute
+        61   (2.9%)          61   (2.9%)     Extralite::Query#execute
+        59   (2.8%)          16   (0.7%)     Thread::Queue#pop
+        59   (2.8%)           0   (0.0%)     (garbage collection)
+        59   (2.8%)           4   (0.2%)     HTTPServer#dispatch
+        59   (2.8%)           0   (0.0%)     HTTPServer#run
+        52   (2.4%)          46   (2.2%)     String#scan
+        51   (2.4%)           2   (0.1%)     Epoll.ready
+        51   (2.4%)           0   (0.0%)     Store#commit
+        50   (2.3%)          50   (2.3%)     (sweeping)
+        44   (2.1%)           5   (0.2%)     Async::Task#async
+        34   (1.6%)          34   (1.6%)     Integer#==
+        34   (1.6%)           4   (0.2%)     App#create
+        31   (1.5%)           4   (0.2%)     Async::Scheduler#io_write
+        31   (1.5%)           7   (0.3%)     Async::Promise#wait
+        29   (1.4%)           1   (0.0%)     Async::Scheduler#io_read
+        29   (1.4%)          29   (1.4%)     String#byteindex

@@ -1,0 +1,1 @@
+{"name":"v01rev-pair-B","image":"tdsc-cicloid:v01rev","users":20000,"seconds":60,"requests":126794,"rps":2113.233,"error_rate":0,"p50_ms":0.674,"p95_ms":1.962,"p99_ms":14.491,"event_loop_delay_ms":72.627,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":1,"server_cpu_pct":9.8,"us_per_req":46,"server_peak_mem_mb":179}

@@ -1,0 +1,71 @@
+diff --git a/README.md b/README.md
+index 9202e9b62bb3600f56ef95a0ada70b5e5549424a..6ea5c6c6d34b515a1b214c6a4fe49fb9ce44a5be 100644
+--- a/README.md
++++ b/README.md
+@@ -31,7 +31,8 @@ version keeps the Async reactor and replaces the HTTP server.
+   owns no Ruby fiber. Each connection is registered once, edge-triggered, so there is no `epoll_ctl`
+   per request. One Async task waits on that epoll descriptor through the reactor. A pool of 256
+   worker fibers (it grows, up to 4096, only when every worker is busy) reads each ready connection,
+-  answers every complete request in its buffer in order, and writes each response with one `write`.
++  answers every complete request in its buffer in order, and sends each response with one direct
++  non-blocking `send`.
+   Memory is about 3–5 KB per connection (about 130 MB at 40k), and GC drops from about 4 s to about
+   0.15 s per minute.
+ - **A minimal HTTP/1.1 parser.** It reads the request line and the four headers the API uses:
+@@ -48,10 +49,19 @@ version keeps the Async reactor and replaces the HTTP server.
+   first real requests don't pay for compilation. The warm-up token is signed with libsodium, which is
+   loaded anyway; loading `openssl` for it cost 8 MB of RSS, and 300 iterations instead of 50 left
+   another 27 MB of garbage resident. Idle RSS is 36 MB either way now.
+-- **io_uring for socket reads and writes.** io-event picks io_uring on the droplet's kernel. Reads
+-  and writes go through the fiber scheduler, so io_uring submits them in batches instead of one
+-  syscall each. Together with edge-triggered epoll, that cut CPU at 40k users from about 46% to 40%
+-  on our test VM.
++- **io_uring for socket reads; one direct send per response.** io-event picks io_uring on the
++  droplet's kernel. Reads go through the fiber scheduler, so io_uring submits the reads of every
++  connection that became ready in a reactor pass together. Batching reads and writes through the
++  ring, together with edge-triggered epoll, is what cut CPU at 40k users from about 46% to 40% on our
++  test VM. Writes have since left the ring: each response is one `write_nonblock`, which on Linux is
++  `send(2)` with `MSG_DONTWAIT` on a socket that is already non-blocking (no `fcntl`, no SQE, no
++  fiber switch), and a response of 60 B to 5 KB fits the empty send buffer essentially always. Only a
++  partial or would-block write falls back to the scheduler's io_uring write for the remainder, which
++  waits for `POLLOUT` and keeps per-connection response order. In a micro-benchmark on one pinned core
++  the ring write cost 1.1–1.5 µs per response against 0.4 µs for the direct send, even with 256
++  concurrent writers sharing each `io_uring_enter`. This fast path matters only while Ruby's
++  `RUBY_FIBER_SCHEDULER_VERSION` is 3 (Ruby 4.0.7): io-event's own optimistic direct write is compiled
++  in from version 4, so a different Ruby build should re-check `ruby/fiber/scheduler.h` before keeping it.
+ - **SQLite builds every response.** `json_object` and `group_concat` produce the exact response bytes,
+   so Ruby never allocates a hash per row or serializes JSON on reads. All statements are prepared once.
+   The single-post query binds its id as `p.id=+?`: with a plain `?` in that join, SQLite treated the
+diff --git a/http.rb b/http.rb
+index 617ed67b6fa1ed66138adc83f6914bb23f1f9153..37f919d74c3f71d7f5e929548d6e03aaf5207024 100644
+--- a/http.rb
++++ b/http.rb
+@@ -4,8 +4,9 @@ require "socket"
+ require_relative "epoll"
+ 
+ # A small HTTP/1.1 server on the Async reactor (io-event: io_uring or epoll), specialised for this API:
+-# it parses the request line and the four headers the API needs, and writes each response with one
+-# write. Requests are handled in order per connection (pipelining works); bodies use Content-Length.
++# it parses the request line and the four headers the API needs, and sends each response with one
++# direct non-blocking send. Requests are handled in order per connection (pipelining works); bodies
++# use Content-Length.
+ #
+ # Idle keep-alive connections own no fiber: they sit in a kernel epoll set (edge-triggered, so a
+ # connection is registered once and never re-armed). One Async task waits for that set to become
+@@ -288,8 +289,14 @@ class HTTPServer
+     write(socket, out)
+   end
+ 
+-  # Through the fiber scheduler: with io_uring, every worker's write is queued and submitted together.
++  # Sockets are already non-blocking, so write_nonblock is one send(2) with MSG_DONTWAIT (no fcntl,
++  # no ring) and the response nearly always leaves inline. Only a partial or would-block write falls
++  # back to the scheduler's io_uring write, which waits for POLLOUT and sends the remainder in order.
+   def write(socket, data)
+-    socket.write(data)
++    written = socket.write_nonblock(data, exception: false)
++    return if written == data.bytesize
++
++    written = 0 if written == :wait_writable
++    socket.write(written.zero? ? data : data.byteslice(written, data.bytesize - written))
+   end
+ end

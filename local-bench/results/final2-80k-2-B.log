@@ -1,0 +1,7 @@
+server up after 2s
+{"name":"final2-80k-2-B","image":"tdsc-cicloid:base","users":80000,"seconds":120,"requests":991039,"rps":8258.658,"error_rate":0,"p50_ms":3.463,"p95_ms":1550.612,"p99_ms":1992.237,"event_loop_delay_ms":226.638,"peak_connections":66420,"connects":263376,"retired_connections":198098,"pass":false,"procs":2,"server_cpu_pct":52.4,"us_per_req":64.5,"server_peak_mem_mb":500}
+{"progress_seconds":90,"requests":240877,"errors":0,"connections":32475,"connects":84640,"retired_connections":52171}
+{"progress_seconds":120,"requests":368848,"errors":0,"connections":32446,"connects":109294,"retired_connections":76848}
+{"progress_seconds":150,"requests":495596,"errors":0,"connections":32579,"connects":132852,"retired_connections":100273}
+/app/http.rb:145: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!
+listening on 0.0.0.0:3000 (141 iseqs compiled)

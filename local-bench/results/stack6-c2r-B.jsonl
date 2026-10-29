@@ -1,0 +1,1 @@
+{"name":"stack6-c2r-B","image":"tdsc-cicloid:stack5","users":80000,"seconds":120,"requests":1016222,"rps":8468.517,"error_rate":0,"p50_ms":1.453,"p95_ms":7.887,"p99_ms":27.505,"event_loop_delay_ms":60.995,"peak_connections":66033,"connects":262301,"retired_connections":197058,"pass":true,"procs":2,"server_cpu_pct":28.8,"us_per_req":33.9,"server_peak_mem_mb":495}
