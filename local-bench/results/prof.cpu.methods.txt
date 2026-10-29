@@ -1,0 +1,154 @@
+===== --method Extralite::Query#next
+Extralite::Query#next (<cfunc>:1)
+  samples:   781 self (36.6%)  /    781 total (36.6%)
+  callers:
+     717  (   91.8%)  Store#feed
+      56  (    7.2%)  Store#post
+       8  (    1.0%)  Store#create
+  code:
+        SOURCE UNAVAILABLE
+===== --method Extralite::Database#execute
+Extralite::Database#execute (<cfunc>:1)
+  samples:    77 self (3.6%)  /     77 total (3.6%)
+  callers:
+      46  (   59.7%)  Store#commit
+      24  (   31.2%)  Store#checkpoint!
+       7  (    9.1%)  Store#begin_batch
+  code:
+        SOURCE UNAVAILABLE
+===== --method Extralite::Query#execute
+Extralite::Query#execute (<cfunc>:1)
+  samples:    61 self (2.9%)  /     61 total (2.9%)
+  callers:
+      61  (  100.0%)  Store#like
+  code:
+        SOURCE UNAVAILABLE
+===== --method IO#write
+IO#write (<cfunc>:1)
+  samples:    58 self (2.7%)  /     89 total (4.2%)
+  callers:
+      89  (  100.0%)  HTTPServer#write
+  callees (31 total):
+      31  (  100.0%)  Async::Scheduler#io_write
+  code:
+        SOURCE UNAVAILABLE
+===== --method String#scan
+String#scan (<cfunc>:1)
+  samples:    46 self (2.2%)  /     52 total (2.4%)
+  callers:
+      52  (  100.0%)  HTTPServer#drain
+  callees (6 total):
+       6  (  100.0%)  HTTPServer#drain
+  code:
+        SOURCE UNAVAILABLE
+===== --method HTTPServer#drain
+HTTPServer#drain (/app/http.rb:210)
+  samples:    23 self (1.1%)  /   1334 total (62.5%)
+  callers:
+    1334  (  100.0%)  HTTPServer#service
+       6  (    0.4%)  String#scan
+  callees (1311 total):
+    1082  (   82.5%)  CountingApp#call
+     147  (   11.2%)  HTTPServer#respond
+      52  (    4.0%)  String#scan
+      29  (    2.2%)  String#byteindex
+       3  (    0.2%)  Regexp.last_match
+       2  (    0.2%)  String#to_i
+       1  (    0.1%)  Numeric#positive?
+       1  (    0.1%)  Regexp#match?
+  code:
+                                  |   210  |   def drain(socket, buffer)
+                                  |   211  |     position = 0
+                                  |   212  |     size = buffer.bytesize
+                                  |   213  |     while position < size
+   14    (0.7%)                   |   214  |       head_end = buffer.byteindex(END_HEAD, position)
+                                  |   215  |       unless head_end
+                                  |   216  |         return reject(socket, 431) if size - position > MAX_HEAD
+                                  |   217  | 
+                                  |   218  |         break
+                                  |   219  |       end
+                                  |   220  | 
+    1    (0.0%)                   |   221  |       line_end = buffer.byteindex(CRLF, position)
+    3    (0.1%)                   |   222  |       space = buffer.byteindex(" ", position)
+    3    (0.1%) /     1   (0.0%)  |   223  |       space2 = space && buffer.byteindex(" ", space + 1)
+                                  |   224  |       return reject(socket, 400) unless space2 && space > position && space2 < line_end
+                                  |   225  | 
+    7    (0.3%) /     7   (0.3%)  |   226  |       version = buffer.byteslice(space2 + 1, line_end - space2 - 1)
+                                  |   227  |       http10 = version == HTTP_10
+                                  |   228  |       return reject(socket, 400) unless http10 || version == HTTP_11
+                                  |   229  | 
+    4    (0.2%) /     4   (0.2%)  |   230  |       method = buffer.byteslice(position, space - position)
+    9    (0.4%)                   |   231  |       query = buffer.byteindex("?", space + 1)
+                                  |   232  |       path_end = query && query < space2 ? query : space2
+    3    (0.1%) /     3   (0.1%)  |   233  |       path = buffer.byteslice(space + 1, path_end - space - 1)
+                                  |   234  | 
+                                  |   235  |       length = 0
+                                  |   236  |       authorization = nil
+                                  |   237  |       close = http10
+                                  |   238  |       if line_end < head_end
+   54    (2.5%) /     2   (0.1%)  |   239  |         buffer.byteslice(line_end, head_end - line_end).scan(HEADER) do
+    2    (0.1%)                   |   240  |           name = Regexp.last_match(1)
+    1    (0.0%)                   |   241  |           value = Regexp.last_match(2)
+                                  |   242  |           value = value.sub(TRAILING_BLANKS, "") if value.end_with?(" ", "\t")
+                                  |   243  |           case name.bytesize
+                                  |   244  |           when 14 # content-length
+    1    (0.0%)                   |   245  |             return reject(socket, 400) unless DIGITS.match?(value)
+                                  |   246  | 
+    2    (0.1%)                   |   247  |             length = value.to_i
+                                  |   248  |           when 17 # transfer-encoding: request bodies must use Content-Length
+                                  |   249  |             return reject(socket, 411)
+                                  |   250  |           when 10 # connection
+                                  |   251  |             if CLOSE_TOKEN.match?(value) then close = true
+                                  |   252  |             elsif http10 && KEEP_ALIVE_TOKEN.match?(value) then close = false
+                                  |   253  |             end
+                                  |   254  |           else # authorization
+===== --method HTTPServer#respond
+HTTPServer#respond (/app/http.rb:284)
+  samples:    24 self (1.1%)  /    147 total (6.9%)
+  callers:
+     147  (  100.0%)  HTTPServer#drain
+  callees (123 total):
+      92  (   74.8%)  HTTPServer#write
+      28  (   22.8%)  String.new
+       3  (    2.4%)  Integer#to_s
+  code:
+                                  |   284  |   def respond(socket, heads, status, document)
+    4    (0.2%) /     4   (0.2%)  |   285  |     head = heads[status] || heads[500]
+   28    (1.3%)                   |   286  |     out = String.new(head, capacity: head.bytesize + 8 + document.bytesize)
+   23    (1.1%) /    20   (0.9%)  |   287  |     out << document.bytesize.to_s << END_HEAD << document
+   92    (4.3%)                   |   288  |     write(socket, out)
+                                  |   289  |   end
+===== --method Thread::Queue#pop
+Thread::Queue#pop (<internal:thread_sync>:16)
+  samples:    16 self (0.7%)  /     59 total (2.8%)
+  callers:
+      59  (  100.0%)  HTTPServer#work
+  callees (43 total):
+      34  (   79.1%)  Integer#==
+       9  (   20.9%)  Async::Scheduler#block
+  code:
+        SOURCE UNAVAILABLE
+===== --method Async::Task#async
+Async::Task#async (/app/vendor/bundle/ruby/4.0.0/gems/async-2.46.0/lib/async/task.rb:247)
+  samples:     5 self (0.2%)  /     44 total (2.1%)
+  callers:
+      44  (  100.0%)  Kernel#Async
+  callees (39 total):
+      29  (   74.4%)  Async::Task#run
+       9  (   23.1%)  Class#new
+       1  (    2.6%)  Async::Task#finished?
+  code:
+                                  |   247  | 		def async(*arguments, **options, &block)
+    1    (0.0%)                   |   248  | 			raise FinishedError if self.finished?
+                                  |   249  | 			
+   12    (0.6%) /     3   (0.1%)  |   250  | 			task = Task.new(self, **options, &block)
+                                  |   251  | 			
+                                  |   252  | 			# When calling an async block, we deterministically execute it until the first blocking operation. We don't *have* to do this - we could schedule it for later execution, but it's useful to:
+                                  |   253  | 			#
+                                  |   254  | 			# - Fail at the point of the method call where possible.
+                                  |   255  | 			# - Execute determinstically where possible.
+                                  |   256  | 			# - Avoid scheduler overhead if no blocking operation is performed.
+                                  |   257  | 			#
+                                  |   258  | 			# There are different strategies (greedy vs non-greedy). We are currently using a greedy strategy.
+   31    (1.5%) /     2   (0.1%)  |   259  | 			task.run(*arguments)
+                                  |   260  | 			

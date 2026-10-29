@@ -1,0 +1,1 @@
+{"name":"aa20k-B","image":"tdsc-cicloid:base","users":20000,"seconds":60,"requests":126783,"rps":2113.05,"error_rate":0,"p50_ms":0.679,"p95_ms":4.197,"p99_ms":73.529,"event_loop_delay_ms":44.865,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":14,"us_per_req":65.7,"server_peak_mem_mb":209}

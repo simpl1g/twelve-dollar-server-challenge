@@ -1,0 +1,1 @@
+{"name":"final2fix-k150-2-A","image":"tdsc-cicloid:final2","users":150000,"seconds":300,"requests":4761875,"rps":15872.917000000001,"error_rate":0,"p50_ms":2.345,"p95_ms":19.656,"p99_ms":48.872,"event_loop_delay_ms":57.466,"peak_connections":66107,"connects":2880442,"retired_connections":2815355,"pass":true,"procs":3,"server_cpu_pct":47,"us_per_req":29.6,"server_peak_mem_mb":540}

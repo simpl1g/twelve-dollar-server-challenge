@@ -1,0 +1,7 @@
+server up after 2s
+{"name":"v10-churn-shed-at-accept-fin-c1-B","image":"tdsc-cicloid:v10-churn-shed-at-accept-fin","users":80000,"seconds":120,"requests":1016442,"rps":8470.349999999999,"error_rate":0,"p50_ms":2.110,"p95_ms":4.746,"p99_ms":18.482,"event_loop_delay_ms":20.227,"peak_connections":65254,"connects":266241,"retired_connections":201154,"pass":true,"procs":2,"server_cpu_pct":32,"us_per_req":37.6,"server_peak_mem_mb":531}
+{"progress_seconds":60,"requests":128033,"errors":0,"connections":32574,"connects":63221,"retired_connections":30647}
+{"progress_seconds":90,"requests":254058,"errors":0,"connections":32561,"connects":85156,"retired_connections":52596}
+{"progress_seconds":120,"requests":381706,"errors":0,"connections":32571,"connects":109578,"retired_connections":77007}
+/app/http.rb:166: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!
+listening on 0.0.0.0:3000 (141 iseqs compiled)

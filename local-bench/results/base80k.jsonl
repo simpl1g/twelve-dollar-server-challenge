@@ -1,0 +1,1 @@
+{"name":"base80k","image":"tdsc-cicloid:base","users":80000,"seconds":120,"requests":1002576,"rps":8354.800,"error_rate":0E-9,"p50_ms":3.818,"p95_ms":1059.478,"p99_ms":1311.651,"event_loop_delay_ms":95.454,"peak_connections":65768,"connects":266644,"retired_connections":201367,"pass":false,"server_cpu_pct":57.5,"us_per_req":69.1,"server_peak_mem_mb":476}

@@ -1,0 +1,1 @@
+{"name":"v05-http-app-micro-trims-p2-B","image":"tdsc-cicloid:base","users":20000,"seconds":60,"requests":126819,"rps":2113.65,"error_rate":0,"p50_ms":0.864,"p95_ms":2.633,"p99_ms":11.659,"event_loop_delay_ms":105.125,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":13.7,"us_per_req":65.2,"server_peak_mem_mb":189}

@@ -1,0 +1,15 @@
+pool workers=67 idle=67 backlog=0 open=6081 commits=0 minor_gc=13 major_gc=7 gc_ms=50
+pool workers=76 idle=35 backlog=0 open=25467 commits=20 minor_gc=22 major_gc=10 gc_ms=91
+pool workers=194 idle=192 backlog=0 open=47804 commits=887 minor_gc=33 major_gc=11 gc_ms=144
+pool workers=272 idle=216 backlog=0 open=65246 commits=2747 minor_gc=45 major_gc=11 gc_ms=211
+pool workers=252 idle=252 backlog=0 open=65268 commits=4493 minor_gc=55 major_gc=11 gc_ms=284
+pool workers=201 idle=201 backlog=0 open=65246 commits=6253 minor_gc=63 major_gc=11 gc_ms=353
+pool workers=141 idle=141 backlog=0 open=65274 commits=7956 minor_gc=70 major_gc=11 gc_ms=418
+pool workers=173 idle=173 backlog=0 open=65277 commits=9536 minor_gc=77 major_gc=11 gc_ms=487
+pool workers=181 idle=152 backlog=0 open=65252 commits=11260 minor_gc=84 major_gc=11 gc_ms=563
+pool workers=134 idle=81 backlog=0 open=65190 commits=13048 minor_gc=90 major_gc=12 gc_ms=659
+pool workers=295 idle=223 backlog=0 open=65264 commits=14729 minor_gc=97 major_gc=12 gc_ms=761
+pool workers=315 idle=315 backlog=0 open=65278 commits=16338 minor_gc=104 major_gc=12 gc_ms=848
+pool workers=144 idle=144 backlog=0 open=65259 commits=18065 minor_gc=111 major_gc=12 gc_ms=933
+pool workers=123 idle=123 backlog=0 open=65265 commits=19794 minor_gc=118 major_gc=12 gc_ms=1023
+pool workers=119 idle=119 backlog=0 open=65276 commits=21543 minor_gc=124 major_gc=12 gc_ms=1103

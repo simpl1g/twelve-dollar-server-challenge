@@ -1,0 +1,1 @@
+{"name":"stack1-p2-A","image":"tdsc-cicloid:stack1","users":20000,"seconds":60,"requests":126789,"rps":2113.1499999999996,"error_rate":0,"p50_ms":0.523,"p95_ms":2.179,"p99_ms":16.889,"event_loop_delay_ms":22.673,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":12.3,"us_per_req":57.6,"server_peak_mem_mb":191}

@@ -1,0 +1,1 @@
+{"name":"v03-direct-write-fast-path-c2-B","image":"tdsc-cicloid:base","users":80000,"seconds":120,"requests":1016465,"rps":8470.542,"error_rate":0,"p50_ms":2.311,"p95_ms":6.445,"p99_ms":21.597,"event_loop_delay_ms":24.182,"peak_connections":65956,"connects":262088,"retired_connections":196810,"pass":true,"procs":2,"server_cpu_pct":33.4,"us_per_req":39.3,"server_peak_mem_mb":482}

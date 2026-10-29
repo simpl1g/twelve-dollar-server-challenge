@@ -1,0 +1,1 @@
+{"name":"v11sk-p1-B","image":"tdsc-cicloid:v11-dispatch-repoll","users":20000,"seconds":60,"requests":126735,"rps":2112.250,"error_rate":0,"p50_ms":0.689,"p95_ms":3.397,"p99_ms":248.909,"event_loop_delay_ms":50.026,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":1,"server_cpu_pct":9.5,"us_per_req":44.5,"server_peak_mem_mb":174}

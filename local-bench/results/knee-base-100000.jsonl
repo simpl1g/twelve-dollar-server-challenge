@@ -1,0 +1,1 @@
+{"name":"knee-base-100000","image":"tdsc-cicloid:base","users":100000,"seconds":120,"requests":1268870,"rps":10573.916000000001,"error_rate":0,"p50_ms":3.109,"p95_ms":10.356,"p99_ms":26.829,"event_loop_delay_ms":24.785,"peak_connections":66469,"connects":559164,"retired_connections":493950,"pass":true,"procs":2,"server_cpu_pct":41.9,"us_per_req":39.5,"server_peak_mem_mb":487}

@@ -1,0 +1,1 @@
+{"name":"stack7-p2-A","image":"tdsc-cicloid:stack7","users":20000,"seconds":60,"requests":126828,"rps":2113.8,"error_rate":0,"p50_ms":0.533,"p95_ms":2.789,"p99_ms":13.596,"event_loop_delay_ms":88.419,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":12.5,"us_per_req":58.3,"server_peak_mem_mb":205}

@@ -1,0 +1,9 @@
+server up after 2s
+{"name":"v06sk-basediag80k-2","image":"tdsc-cicloid:v06-skeptic-basediag","users":80000,"seconds":60,"requests":506960,"rps":8449.333,"error_rate":0,"p50_ms":2.439,"p95_ms":9.803,"p99_ms":25.689,"event_loop_delay_ms":24.667,"peak_connections":65387,"connects":167340,"retired_connections":102088,"pass":true,"procs":1,"server_cpu_pct":35.3,"us_per_req":41.8,"server_peak_mem_mb":396}
+{"progress_seconds":30,"requests":84050,"errors":0,"connections":65263,"connects":89756,"retired_connections":24493}
+{"progress_seconds":60,"requests":337753,"errors":0,"connections":65269,"connects":136014,"retired_connections":70745}
+pool workers=325 peak=325 waiting=325 queued=0 open=65278 commits=16284 minor_gc=122 major_gc=12 gc_ms=984
+pool workers=328 peak=328 waiting=328 queued=0 open=65263 commits=17947 minor_gc=129 major_gc=13 gc_ms=1099
+pool workers=335 peak=335 waiting=335 queued=0 open=65274 commits=19704 minor_gc=136 major_gc=13 gc_ms=1190
+pool workers=337 peak=337 waiting=337 queued=0 open=65245 commits=21429 minor_gc=142 major_gc=13 gc_ms=1269
+pool workers=337 peak=337 waiting=258 queued=0 open=65259 commits=23123 minor_gc=149 major_gc=13 gc_ms=1360

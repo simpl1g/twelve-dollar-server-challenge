@@ -1,0 +1,1 @@
+{"name":"final2fix-c1-A","image":"tdsc-cicloid:stack5","users":80000,"seconds":120,"requests":1016416,"rps":8470.134,"error_rate":0,"p50_ms":1.075,"p95_ms":3.943,"p99_ms":18.238,"event_loop_delay_ms":51.068,"peak_connections":66001,"connects":262347,"retired_connections":197075,"pass":true,"procs":2,"server_cpu_pct":26,"us_per_req":30.6,"server_peak_mem_mb":462}

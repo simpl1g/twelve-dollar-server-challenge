@@ -1,0 +1,9 @@
+server up after 2s
+{"name":"v06sk-refdiag80k","image":"tdsc-cicloid:v06-skeptic-refdiag","users":80000,"seconds":60,"requests":506651,"rps":8444.183,"error_rate":0,"p50_ms":2.411,"p95_ms":13.943,"p99_ms":131.547,"event_loop_delay_ms":42.343,"peak_connections":65712,"connects":167004,"retired_connections":101735,"pass":true,"procs":1,"server_cpu_pct":35,"us_per_req":41.5,"server_peak_mem_mb":391}
+{"progress_seconds":30,"requests":83889,"errors":0,"connections":65270,"connects":89538,"retired_connections":24268}
+{"progress_seconds":60,"requests":337509,"errors":0,"connections":65198,"connects":135711,"retired_connections":70513}
+pool workers=295 idle=223 backlog=0 open=65264 commits=14729 minor_gc=97 major_gc=12 gc_ms=761
+pool workers=315 idle=315 backlog=0 open=65278 commits=16338 minor_gc=104 major_gc=12 gc_ms=848
+pool workers=144 idle=144 backlog=0 open=65259 commits=18065 minor_gc=111 major_gc=12 gc_ms=933
+pool workers=123 idle=123 backlog=0 open=65265 commits=19794 minor_gc=118 major_gc=12 gc_ms=1023
+pool workers=119 idle=119 backlog=0 open=65276 commits=21543 minor_gc=124 major_gc=12 gc_ms=1103

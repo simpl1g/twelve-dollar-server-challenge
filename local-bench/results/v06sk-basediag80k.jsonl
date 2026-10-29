@@ -1,0 +1,1 @@
+{"name":"v06sk-basediag80k","image":"tdsc-cicloid:v06-skeptic-basediag","users":80000,"seconds":60,"requests":506762,"rps":8446.033,"error_rate":0,"p50_ms":2.559,"p95_ms":13.323,"p99_ms":49.424,"event_loop_delay_ms":69.316,"peak_connections":65536,"connects":166491,"retired_connections":101224,"pass":true,"procs":1,"server_cpu_pct":36.9,"us_per_req":43.7,"server_peak_mem_mb":394}

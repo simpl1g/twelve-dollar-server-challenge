@@ -1,0 +1,7 @@
+server up after 2s
+{"name":"v09-sqlite-mmap-off-pcache-p2-A","image":"tdsc-cicloid:v09-sqlite-mmap-off-pcache","users":20000,"seconds":60,"requests":126830,"rps":2113.834,"error_rate":0,"p50_ms":0.649,"p95_ms":2.118,"p99_ms":8.475,"event_loop_delay_ms":27.763,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":13.7,"us_per_req":64.2,"server_peak_mem_mb":207}
+{"progress_seconds":60,"requests":42281,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":30,"requests":10603,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":60,"requests":42235,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+/app/http.rb:145: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!
+listening on 0.0.0.0:3000 (141 iseqs compiled)

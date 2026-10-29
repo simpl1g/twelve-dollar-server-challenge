@@ -1,0 +1,1 @@
+{"name":"final2-20k-2-A","image":"tdsc-cicloid:final2","users":20000,"seconds":60,"requests":125359,"rps":2089.317,"error_rate":0,"p50_ms":24.101,"p95_ms":846.531,"p99_ms":1072.188,"event_loop_delay_ms":223.228,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":false,"procs":2,"server_cpu_pct":45.9,"us_per_req":238.6,"server_peak_mem_mb":194}

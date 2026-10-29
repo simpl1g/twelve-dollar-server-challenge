@@ -1,0 +1,7 @@
+server up after 2s
+{"name":"v04-group-commit-deferred-flush-p2-A","image":"tdsc-cicloid:v04-group-commit-deferred-flush","users":20000,"seconds":60,"requests":126839,"rps":2113.983,"error_rate":0,"p50_ms":0.571,"p95_ms":1.973,"p99_ms":14.191,"event_loop_delay_ms":62.693,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":12.9,"us_per_req":60.3,"server_peak_mem_mb":175}
+{"progress_seconds":60,"requests":42277,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":30,"requests":10617,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":60,"requests":42245,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+/app/http.rb:145: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!
+listening on 0.0.0.0:3000 (141 iseqs compiled)

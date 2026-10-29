@@ -1,0 +1,1 @@
+{"name":"knee2-230k-A","image":"tdsc-cicloid:stack5","users":230000,"seconds":300,"requests":7292766,"rps":24309.221,"error_rate":0,"p50_ms":7.443,"p95_ms":71.248,"p99_ms":108.044,"event_loop_delay_ms":28.977,"peak_connections":68858,"connects":5546911,"retired_connections":5481664,"pass":true,"procs":4,"server_cpu_pct":81.5,"us_per_req":33.6,"server_peak_mem_mb":588}

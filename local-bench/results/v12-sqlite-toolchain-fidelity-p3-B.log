@@ -1,0 +1,7 @@
+server up after 2s
+{"name":"v12-sqlite-toolchain-fidelity-p3-B","image":"tdsc-cicloid:v12-sqlite-toolchain-fidelity","users":20000,"seconds":60,"requests":126831,"rps":2113.85,"error_rate":0,"p50_ms":0.899,"p95_ms":2.510,"p99_ms":12.937,"event_loop_delay_ms":26.404,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":13.7,"us_per_req":63.8,"server_peak_mem_mb":212}
+{"progress_seconds":60,"requests":42285,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":30,"requests":10601,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":60,"requests":42238,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+/app/http.rb:145: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!
+listening on 0.0.0.0:3000 (141 iseqs compiled)

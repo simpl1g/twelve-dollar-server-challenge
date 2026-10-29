@@ -1,0 +1,10 @@
+server up after 2s
+{"name":"final2-knee-187500r-B","image":"tdsc-cicloid:final2","users":187500,"seconds":300,"requests":5947267,"rps":19824.223,"error_rate":0,"p50_ms":3.673,"p95_ms":44.319,"p99_ms":178.453,"event_loop_delay_ms":106.303,"peak_connections":67996,"connects":4139065,"retired_connections":4073978,"pass":true,"procs":3,"server_cpu_pct":65.5,"us_per_req":33.1,"server_peak_mem_mb":608}
+{"progress_seconds":240,"requests":1387279,"errors":0,"connections":21586,"connects":993644,"retired_connections":972058}
+{"progress_seconds":270,"requests":1586026,"errors":0,"connections":21572,"connects":1123659,"retired_connections":1102097}
+{"progress_seconds":300,"requests":1784305,"errors":0,"connections":21589,"connects":1253781,"retired_connections":1232194}
+pool workers=298 idle=92 backlog=0 open=65181 commits=110578 minor_gc=612 gc_ms=6022
+pool workers=261 idle=229 backlog=0 open=65087 commits=115064 minor_gc=635 gc_ms=6285
+pool workers=263 idle=153 backlog=0 open=65126 commits=119619 minor_gc=657 gc_ms=6545
+pool workers=461 idle=429 backlog=0 open=65087 commits=123658 minor_gc=680 gc_ms=6840
+pool workers=598 idle=97 backlog=0 open=27407 commits=127695 minor_gc=702 gc_ms=7116

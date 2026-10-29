@@ -1,0 +1,1 @@
+{"name":"final2fix-80k-2-A","image":"tdsc-cicloid:final2","users":80000,"seconds":120,"requests":1016420,"rps":8470.167,"error_rate":0,"p50_ms":1.239,"p95_ms":5.808,"p99_ms":23.835,"event_loop_delay_ms":46.575,"peak_connections":65351,"connects":266251,"retired_connections":201162,"pass":true,"procs":2,"server_cpu_pct":27.9,"us_per_req":32.9,"server_peak_mem_mb":494}

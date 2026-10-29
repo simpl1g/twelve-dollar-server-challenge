@@ -1,0 +1,7 @@
+server up after 2s
+{"name":"v11-dispatch-repoll-c1-B","image":"tdsc-cicloid:v11-dispatch-repoll","users":80000,"seconds":120,"requests":1016358,"rps":8469.65,"error_rate":0,"p50_ms":2.206,"p95_ms":6.863,"p99_ms":21.981,"event_loop_delay_ms":31.354,"peak_connections":66143,"connects":262026,"retired_connections":196792,"pass":true,"procs":2,"server_cpu_pct":33.1,"us_per_req":39,"server_peak_mem_mb":481}
+{"progress_seconds":60,"requests":128086,"errors":0,"connections":32630,"connects":60840,"retired_connections":28210}
+{"progress_seconds":90,"requests":254079,"errors":0,"connections":32601,"connects":84049,"retired_connections":51448}
+{"progress_seconds":120,"requests":381746,"errors":0,"connections":32570,"connects":107513,"retired_connections":74943}
+/app/http.rb:149: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!
+listening on 0.0.0.0:3000 (141 iseqs compiled)

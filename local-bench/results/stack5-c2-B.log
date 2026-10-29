@@ -1,0 +1,10 @@
+server up after 2s
+{"name":"stack5-c2-B","image":"tdsc-cicloid:stack4","users":80000,"seconds":120,"requests":1016157,"rps":8467.974999999999,"error_rate":0,"p50_ms":1.405,"p95_ms":5.749,"p99_ms":30.415,"event_loop_delay_ms":22.524,"peak_connections":66135,"connects":262434,"retired_connections":197212,"pass":true,"procs":2,"server_cpu_pct":27.4,"us_per_req":32.3,"server_peak_mem_mb":460}
+{"progress_seconds":60,"requests":128007,"errors":0,"connections":32421,"connects":60897,"retired_connections":28476}
+{"progress_seconds":90,"requests":254009,"errors":0,"connections":32577,"connects":84181,"retired_connections":51608}
+{"progress_seconds":120,"requests":381709,"errors":0,"connections":32642,"connects":107976,"retired_connections":75334}
+pool workers=101 idle=69 backlog=0 open=65248 commits=29485 minor_gc=111 gc_ms=991
+pool workers=114 idle=78 backlog=0 open=65249 commits=33017 minor_gc=121 gc_ms=1118
+pool workers=99 idle=67 backlog=0 open=65246 commits=36591 minor_gc=130 gc_ms=1240
+pool workers=95 idle=64 backlog=0 open=65271 commits=40227 minor_gc=139 gc_ms=1362
+pool workers=96 idle=64 backlog=0 open=65275 commits=43845 minor_gc=148 gc_ms=1535

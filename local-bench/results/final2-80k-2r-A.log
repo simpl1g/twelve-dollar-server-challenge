@@ -1,0 +1,10 @@
+server up after 2s
+{"name":"final2-80k-2r-A","image":"tdsc-cicloid:final2","users":80000,"seconds":120,"requests":1013681,"rps":8447.342,"error_rate":0,"p50_ms":1.408,"p95_ms":66.247,"p99_ms":713.787,"event_loop_delay_ms":106.102,"peak_connections":67672,"connects":265806,"retired_connections":200719,"pass":true,"procs":2,"server_cpu_pct":30.1,"us_per_req":36,"server_peak_mem_mb":511}
+{"progress_seconds":60,"requests":127609,"errors":0,"connections":32555,"connects":63197,"retired_connections":30642}
+{"progress_seconds":90,"requests":253531,"errors":0,"connections":32552,"connects":85140,"retired_connections":52589}
+{"progress_seconds":120,"requests":381257,"errors":0,"connections":32554,"connects":109604,"retired_connections":77050}
+pool workers=136 idle=89 backlog=0 open=65087 commits=27923 minor_gc=126 gc_ms=741
+pool workers=115 idle=83 backlog=0 open=65087 commits=31197 minor_gc=136 gc_ms=827
+pool workers=101 idle=64 backlog=0 open=65091 commits=34457 minor_gc=145 gc_ms=891
+pool workers=259 idle=213 backlog=0 open=65089 commits=37665 minor_gc=156 gc_ms=979
+pool workers=135 idle=103 backlog=0 open=65087 commits=40944 minor_gc=165 gc_ms=1052

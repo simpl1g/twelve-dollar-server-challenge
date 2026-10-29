@@ -1,0 +1,1 @@
+{"name":"v11-dispatch-repoll-p3-A","image":"tdsc-cicloid:base","users":20000,"seconds":60,"requests":126829,"rps":2113.816,"error_rate":0,"p50_ms":0.678,"p95_ms":2.275,"p99_ms":14.129,"event_loop_delay_ms":28.294,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":14.2,"us_per_req":66.5,"server_peak_mem_mb":214}

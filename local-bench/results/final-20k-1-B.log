@@ -1,0 +1,10 @@
+server up after 2s
+{"name":"final-20k-1-B","image":"tdsc-cicloid:final","users":20000,"seconds":60,"requests":126819,"rps":2113.6499999999996,"error_rate":0,"p50_ms":0.621,"p95_ms":1.930,"p99_ms":7.029,"event_loop_delay_ms":31.578,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":11.1,"us_per_req":52,"server_peak_mem_mb":182}
+{"progress_seconds":60,"requests":42283,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":30,"requests":10599,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+{"progress_seconds":60,"requests":42234,"errors":0,"connections":10000,"connects":10000,"retired_connections":0}
+pool workers=64 idle=45 backlog=0 open=20000 commits=3444 minor_gc=37 gc_ms=166
+pool workers=64 idle=64 backlog=0 open=20000 commits=4740 minor_gc=44 gc_ms=196
+pool workers=64 idle=64 backlog=0 open=20000 commits=6001 minor_gc=51 gc_ms=239
+pool workers=64 idle=64 backlog=0 open=20000 commits=7290 minor_gc=57 gc_ms=260
+pool workers=64 idle=64 backlog=0 open=20000 commits=8593 minor_gc=64 gc_ms=283

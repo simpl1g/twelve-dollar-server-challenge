@@ -1,0 +1,7 @@
+server up after 2s
+{"name":"v06-worker-pool-lifo-shrink-c2-B","image":"tdsc-cicloid:base","users":80000,"seconds":120,"requests":1015304,"rps":8460.867,"error_rate":0,"p50_ms":2.394,"p95_ms":20.510,"p99_ms":478.591,"event_loop_delay_ms":50.998,"peak_connections":67023,"connects":262296,"retired_connections":197043,"pass":true,"procs":2,"server_cpu_pct":37.3,"us_per_req":43.9,"server_peak_mem_mb":510}
+{"progress_seconds":60,"requests":128042,"errors":0,"connections":32463,"connects":60558,"retired_connections":28104}
+{"progress_seconds":90,"requests":254011,"errors":0,"connections":32647,"connects":84199,"retired_connections":51552}
+{"progress_seconds":120,"requests":380904,"errors":0,"connections":32437,"connects":107773,"retired_connections":75336}
+/app/http.rb:145: warning: IO::Buffer is experimental and both the Ruby and C interface may change in the future!
+listening on 0.0.0.0:3000 (141 iseqs compiled)

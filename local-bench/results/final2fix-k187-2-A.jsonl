@@ -1,0 +1,1 @@
+{"name":"final2fix-k187-2-A","image":"tdsc-cicloid:final2","users":187500,"seconds":300,"requests":5951120,"rps":19837.067,"error_rate":0,"p50_ms":3.049,"p95_ms":35.064,"p99_ms":73.765,"event_loop_delay_ms":27.732,"peak_connections":67555,"connects":4139558,"retired_connections":4074346,"pass":true,"procs":3,"server_cpu_pct":58.7,"us_per_req":29.6,"server_peak_mem_mb":581}

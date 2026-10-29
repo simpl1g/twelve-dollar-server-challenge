@@ -1,0 +1,1 @@
+{"name":"final2fix-c1-B","image":"tdsc-cicloid:final2","users":80000,"seconds":120,"requests":1016452,"rps":8470.433,"error_rate":0,"p50_ms":1.211,"p95_ms":3.294,"p99_ms":15.645,"event_loop_delay_ms":37.744,"peak_connections":65193,"connects":266241,"retired_connections":201152,"pass":true,"procs":2,"server_cpu_pct":24.3,"us_per_req":28.6,"server_peak_mem_mb":483}

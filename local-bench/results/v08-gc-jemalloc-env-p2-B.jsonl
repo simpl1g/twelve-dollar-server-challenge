@@ -1,0 +1,1 @@
+{"name":"v08-gc-jemalloc-env-p2-B","image":"tdsc-cicloid:base","users":20000,"seconds":60,"requests":126837,"rps":2113.95,"error_rate":0,"p50_ms":0.651,"p95_ms":2.436,"p99_ms":13.166,"event_loop_delay_ms":41.055,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":13.8,"us_per_req":64.3,"server_peak_mem_mb":207}

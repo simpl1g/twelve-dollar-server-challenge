@@ -1,0 +1,2 @@
+{"side":"A","image":"tdsc-cicloid:base","users":20000,"requests":126789,"pass":true,"p95_ms":3.140,"p99_ms":13.256,"error_rate":0,"us_per_req":55,"server_cpu_pct":11.7,"peak_connections":20000,"connects":20000,"server_peak_mem_mb":178}
+{"side":"B","image":"tdsc-cicloid:v02-review","users":20000,"requests":126774,"pass":true,"p95_ms":3.166,"p99_ms":13.773,"error_rate":0,"us_per_req":54.3,"server_cpu_pct":11.5,"peak_connections":20000,"connects":20000,"server_peak_mem_mb":179}

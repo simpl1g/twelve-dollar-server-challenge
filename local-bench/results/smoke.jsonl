@@ -1,0 +1,1 @@
+{"name":"smoke","image":"tdsc-cicloid:base","users":4000,"seconds":20,"requests":8861,"rps":443.04999999999995,"error_rate":0,"p50_ms":0.715,"p95_ms":5.211,"p99_ms":11.041,"event_loop_delay_ms":33.869,"peak_connections":4000,"connects":4000,"retired_connections":0,"pass":true,"procs":2,"server_cpu_pct":9.3,"us_per_req":201.6,"server_peak_mem_mb":96}

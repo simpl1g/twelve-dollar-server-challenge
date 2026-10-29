@@ -1,0 +1,1 @@
+{"name":"v03p2-var20k","image":"tdsc-cicloid:v03-direct-write-fast-path","users":20000,"seconds":60,"requests":126739,"rps":2112.317,"error_rate":0,"p50_ms":0.677,"p95_ms":2.981,"p99_ms":132.508,"event_loop_delay_ms":45.959,"peak_connections":20000,"connects":20000,"retired_connections":0,"pass":true,"procs":1,"server_cpu_pct":11.1,"us_per_req":52.6,"server_peak_mem_mb":171}

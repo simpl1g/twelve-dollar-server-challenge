@@ -1,0 +1,9 @@
+server up after 1s
+{"name":"v06-skeptic-basediag80k","image":"tdsc-cicloid:v06-skeptic-basediag","users":80000,"seconds":60,"requests":505770,"rps":8429.500,"error_rate":0,"p50_ms":3.885,"p95_ms":130.522,"p99_ms":321.527,"event_loop_delay_ms":97.025,"peak_connections":66261,"connects":167213,"retired_connections":101960,"pass":true,"procs":1,"server_cpu_pct":52.7,"us_per_req":63.7,"server_peak_mem_mb":415}
+{"progress_seconds":30,"requests":84251,"errors":0,"connections":65273,"connects":89554,"retired_connections":24281}
+{"progress_seconds":60,"requests":336676,"errors":0,"connections":65005,"connects":136107,"retired_connections":71102}
+pool workers=858 peak=858 waiting=842 queued=11 open=65203 minor_gc=107 major_gc=12 gc_ms=1263
+pool workers=968 peak=968 waiting=711 queued=689 open=64623 minor_gc=114 major_gc=12 gc_ms=1385
+pool workers=1048 peak=1048 waiting=1048 queued=0 open=65229 minor_gc=121 major_gc=12 gc_ms=1544
+pool workers=1064 peak=1064 waiting=1000 queued=0 open=65201 minor_gc=129 major_gc=12 gc_ms=1729
+pool workers=1153 peak=1153 waiting=636 queued=0 open=5114 minor_gc=134 major_gc=12 gc_ms=1847
