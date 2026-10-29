@@ -1,0 +1,39 @@
+diff --git a/epoll.rb b/epoll.rb
+index f0777a7c38eabc82d73e6208aa0ff76de830b1f8..13b89122dd6f374da26338f83c3f8c95fabad8dd 100644
+--- a/epoll.rb
++++ b/epoll.rb
+@@ -54,5 +54,6 @@ module Epoll
+       yield events.get_uint64(index * SIZE + DATA)
+       index += 1
+     end
++    ready
+   end
+ end
+diff --git a/http.rb b/http.rb
+index 617ed67b6fa1ed66138adc83f6914bb23f1f9153..9ffb86f2abd4c693ec8666bb1bbf7c5e37917e76 100644
+--- a/http.rb
++++ b/http.rb
+@@ -121,9 +121,8 @@ class HTTPServer
+   def dispatch
+     poller = IO.for_fd(@epfd, autoclose: false)
+     events = Epoll.events(MAX_EVENTS)
+-    loop do
+-      poller.wait_readable
+-      Epoll.ready(@epfd, events, MAX_EVENTS) do |fd|
++    while true
++      count = Epoll.ready(@epfd, events, MAX_EVENTS) do |fd|
+         case @state[fd]
+         when IDLE
+           @state[fd] = BUSY
+@@ -133,6 +132,11 @@ class HTTPServer
+           @state[fd] = AGAIN
+         end
+       end
++      if count.zero?
++        poller.wait_readable
++      else
++        Fiber.scheduler.yield
++      end
+     end
+   end
+ 

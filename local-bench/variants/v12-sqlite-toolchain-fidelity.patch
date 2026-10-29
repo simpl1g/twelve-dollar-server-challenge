@@ -1,0 +1,165 @@
+diff --git a/README.md b/README.md
+index 9202e9b62bb3600f56ef95a0ada70b5e5549424a..f8f200a8e0bef7c88eb7555a0cf2b5fe9a562212 100644
+--- a/README.md
++++ b/README.md
+@@ -69,6 +69,16 @@ version keeps the Async reactor and replaces the HTTP server.
+   on). It's then profile-guided: `sqlite_train.c` runs the server's own statements in the load test's
+   mix against a synthetic database, and the final build uses that profile. That made reads about 7%
+   faster.
++- **The PGO trainer mirrors the server.** The profile is only as good as its match with the real
++  workload, so the trainer copies `app.rb` exactly: the same pragmas in the same order (`mmap_size`,
++  `cache_size` and `temp_store` included, so the mmap page path is trained at all), the same statement
++  text, and one `step` then `reset` per request instead of stepping to `DONE`. Its synthetic database
++  is seed-sized (50k users, 500k posts, 2M likes, with `ANALYZE`), post ids for reads and likes come
++  from the 20 newest posts as in the load test, and `__gcov_reset()` zeroes the counters after seeding
++  so the bulk-insert phase, which the server never runs, carries no weight. Measured at the SQLite
++  level this takes the feed statement from 18.9 to 17.9 µs; end to end it is about 0.4 µs per request
++  (under 1%), so it is paired-benchmarked rather than claimed. It adds about 10 s to `install.sh` and a
++  224 MB temporary database.
+ - **One thread, and SQLite never releases the GVL.** Every query is an index lookup that takes
+   microseconds, so releasing and reacquiring the GVL would cost more than it saves.
+ - **JWT verified on every request**, with no caching (rule 5). libsodium's one-shot HMAC-SHA256 takes
+diff --git a/install.sh b/install.sh
+index 6a935fc0ac157e5ab4dfde4d4475a59787b05d0e..70f7faf9c6fe1e6ed2d6c8b6ac3d9e2bc7cca334 100755
+--- a/install.sh
++++ b/install.sh
+@@ -23,13 +23,16 @@ fetch() { # fetch <url> <sha256> <file>
+ 
+ # SQLite: static library, so the extralite extension embeds it. Options from sqlite.org's
+ # "recommended compile-time options".
+-# Profile-guided: an instrumented build runs sqlite_train.c (the server's statements, prepared
+-# once, in the load test's mix) and the final build uses that profile.
++# Profile-guided: an instrumented build runs sqlite_train.c (the server's pragmas and statements,
++# prepared once and stepped once per request as the server does, in the load test's mix against a
++# seed-scale database, with the profile counters zeroed after seeding) and the final build uses
++# that profile. The "-pgo2" marker names this trainer; bump it whenever the trainer changes so an
++# existing /opt/sqlite is rebuilt (on a rerun also remove vendor/bundle so extralite relinks).
+ SQLITE=3540000
+ SQLITE_FLAGS="-O3 $NATIVE -fPIC -DSQLITE_DQS=0 -DSQLITE_THREADSAFE=2 -DSQLITE_DEFAULT_MEMSTATUS=0
+   -DSQLITE_DEFAULT_WAL_SYNCHRONOUS=1 -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_MAX_EXPR_DEPTH=0
+   -DSQLITE_OMIT_DEPRECATED -DSQLITE_OMIT_SHARED_CACHE -DSQLITE_USE_ALLOCA -DSQLITE_ENABLE_COLUMN_METADATA"
+-if ! grep -qx "$SQLITE-pgo" /opt/sqlite/VERSION 2>/dev/null; then
++if ! grep -qx "$SQLITE-pgo2" /opt/sqlite/VERSION 2>/dev/null; then
+   fetch "https://sqlite.org/2026/sqlite-amalgamation-$SQLITE.zip" \
+     68e913b0fe8ec6b4e5f391c594a28872884e80d6cd042a1e50c957be46b5aa4d sqlite.zip
+   (cd "$work" && unzip -q sqlite.zip)
+@@ -46,7 +49,7 @@ if ! grep -qx "$SQLITE-pgo" /opt/sqlite/VERSION 2>/dev/null; then
+   rm -rf /opt/sqlite && mkdir -p /opt/sqlite/lib /opt/sqlite/include
+   ar rcs /opt/sqlite/lib/libsqlite3.a "$work/sqlite3.o"
+   cp "$src/sqlite3.h" "$src/sqlite3ext.h" /opt/sqlite/include/
+-  echo "$SQLITE-pgo" > /opt/sqlite/VERSION
++  echo "$SQLITE-pgo2" > /opt/sqlite/VERSION
+ fi
+ 
+ # libsodium: HMAC-SHA256 for JWT verification, loaded by rbnacl through FFI.
+diff --git a/sqlite_train.c b/sqlite_train.c
+index 4c0da1157d6d96248ba01baef6179f0330b36b02..432985c7e96cb182c112525fa69ce5b7ba107b4e 100644
+--- a/sqlite_train.c
++++ b/sqlite_train.c
+@@ -1,13 +1,22 @@
+ /* Profile-guided optimization workload for SQLite, run by install.sh against an instrumented build.
+- * Builds a synthetic database with the challenge schema, then steps the server's exact statements
+- * (prepared once, as the server does) in roughly the load test's mix. Not part of the server.
++ * Builds a seed-scale synthetic database with the challenge schema (50k users, 500k posts, 2M likes),
++ * zeroes the profile counters, then steps the server's exact statements with the server's pragmas,
++ * prepared once and stepped once then reset as the server does, in the load test's mix, with post
++ * ids drawn from the 20 newest posts the way the load does. Not part of the server.
+  *
+- *   sqlite_train <scratch.db>
++ * The PRAGMA line and FEED, POST, CREATE, LIKE and EXISTS are copies of app.rb's Store, in its order:
++ * keep them in sync, the profile is only as good as its match with what the server runs.
++ *
++ *   sqlite_train <scratch.db> [iterations]
+  */
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include "sqlite3.h"
+ 
++/* libgcov, linked by -fprofile-generate: zeroes every counter, so the seeding phase (which the
++ * server never runs) leaves no weight in the profile. */
++extern void __gcov_reset(void);
++
+ #define POST_JSON "json_object('id',p.id,'body',p.body,'created_at',p.created_at,'author',u.username," \
+                   "'like_count',(SELECT count(*) FROM likes l WHERE l.post_id=p.id))"
+ 
+@@ -27,15 +36,19 @@ static sqlite3_stmt *prepare(const char *sql) {
+     return statement;
+ }
+ 
++/* One step then reset, as the server's `next` + `reset` does: it never steps a statement to DONE. */
+ static void run(sqlite3_stmt *statement) {
+-    while (sqlite3_step(statement) == SQLITE_ROW) (void)sqlite3_column_text(statement, 0);
++    if (sqlite3_step(statement) == SQLITE_ROW) (void)sqlite3_column_text(statement, 0);
+     sqlite3_reset(statement);
+ }
+ 
+ int main(int argc, char **argv) {
+-    if (argc < 2 || sqlite3_open(argv[1], &db) != SQLITE_OK) { fprintf(stderr, "usage: sqlite_train <db>\n"); return 2; }
++    int iterations = argc > 2 ? atoi(argv[2]) : 40000;
++    if (argc < 2 || sqlite3_open(argv[1], &db) != SQLITE_OK) { fprintf(stderr, "usage: sqlite_train <db> [iterations]\n"); return 2; }
++    /* app.rb's pragmas in app.rb's order: locking_mode before journal_mode keeps the wal-index in heap memory. */
+     exec("PRAGMA locking_mode=EXCLUSIVE; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;"
+-         "PRAGMA foreign_keys=ON; PRAGMA wal_autocheckpoint=0;");
++         "PRAGMA foreign_keys=ON; PRAGMA wal_autocheckpoint=0; PRAGMA mmap_size=1073741824;"
++         "PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY;");
+     exec("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE,"
+          " created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));"
+          "CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),"
+@@ -46,15 +59,18 @@ int main(int argc, char **argv) {
+          "CREATE INDEX posts_created_at_id_idx ON posts (created_at DESC, id DESC);"
+          "CREATE INDEX posts_user_id_idx ON posts (user_id);"
+          "CREATE INDEX likes_post_id_idx ON likes (post_id);");
++    /* Seed scale: 50k users, 500k posts whose index order matches id order, 2M likes (4 distinct users
++     * per post: the per-500k-block user offset keeps the pairs distinct, a plain (i*7)%50000 repeats). */
+     exec("BEGIN;"
+-         "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<5000)"
+-         " INSERT INTO users(id,username) SELECT i,'user_'||i FROM n;"
+          "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<50000)"
+-         " INSERT INTO posts(id,user_id,body,created_at) SELECT i,1+i%5000,'post body number '||i||' with some text',"
+-         " strftime('%Y-%m-%dT%H:%M:%fZ','2025-01-01','+'||i||' seconds') FROM n;"
+-         "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<200000)"
+-         " INSERT OR IGNORE INTO likes(user_id,post_id) SELECT 1+(i*7)%5000,1+(i*13)%50000 FROM n;"
++         " INSERT INTO users(id,username) SELECT i,'user_'||i FROM n;"
++         "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<500000)"
++         " INSERT INTO posts(id,user_id,body,created_at) SELECT i,1+i%50000,'post body number '||i||' with some text',"
++         " strftime('%Y-%m-%dT%H:%M:%fZ','2025-01-01','+'||(i*63)||' seconds') FROM n;"
++         "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<2000000)"
++         " INSERT OR IGNORE INTO likes(user_id,post_id) SELECT 1+(i*7+(i/500000)*12345)%50000,1+(i*13)%500000 FROM n;"
+          "COMMIT; ANALYZE;");
++    __gcov_reset();
+ 
+     sqlite3_stmt *feed = prepare(
+         "SELECT '{\"posts\":['||coalesce(group_concat(doc,',' ORDER BY created_at DESC,id DESC),'')||']}' "
+@@ -70,23 +86,26 @@ int main(int argc, char **argv) {
+     sqlite3_stmt *exists = prepare("SELECT 1 FROM posts WHERE id=?");
+     sqlite3_stmt *ping = prepare("SELECT 1");
+ 
++    sqlite3_int64 max_post_id = 500000;
+     unsigned seed = 12345;
+-    for (int i = 0; i < 40000; i++) {
++    for (int i = 0; i < iterations; i++) {
+         seed = seed * 1103515245u + 12345u;
+         run(feed);
+-        sqlite3_bind_int64(post, 1, 1 + seed % 50000);
++        sqlite3_int64 id = max_post_id - seed % 20; /* the load picks one of the feed's 20 posts */
++        sqlite3_bind_int64(post, 1, id);
+         run(post);
+         if (i % 7 == 0) {
+             exec("BEGIN IMMEDIATE");
+-            sqlite3_bind_int64(like, 1, 1 + seed % 5000);
+-            sqlite3_bind_int64(like, 2, 1 + (seed >> 8) % 50000);
++            sqlite3_bind_int64(like, 1, 1 + (seed >> 8) % 50000);
++            sqlite3_bind_int64(like, 2, id);
+             run(like);
+-            if (sqlite3_changes(db) == 0) { sqlite3_bind_int64(exists, 1, 1 + (seed >> 8) % 50000); run(exists); }
++            if (sqlite3_changes(db) == 0) { sqlite3_bind_int64(exists, 1, id); run(exists); }
+             if (i % 49 == 0) {
+-                sqlite3_bind_int64(create, 1, 1 + seed % 5000);
++                sqlite3_bind_int64(create, 1, 1 + (seed >> 8) % 50000);
+                 sqlite3_bind_text(create, 2, "a freshly written post body", -1, SQLITE_STATIC);
+                 sqlite3_bind_text(create, 3, "user_1", -1, SQLITE_STATIC);
+                 run(create);
++                max_post_id = sqlite3_last_insert_rowid(db);
+             }
+             exec("COMMIT");
+         }

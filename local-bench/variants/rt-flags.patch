@@ -1,0 +1,21 @@
+diff --git a/install.sh b/install.sh
+index 6a935fc0ac157e5ab4dfde4d4475a59787b05d0e..6df6c1f0bfa634db8b7295861272717a5daf0172 100755
+--- a/install.sh
++++ b/install.sh
+@@ -67,8 +67,14 @@ if [ "$(/opt/ruby/bin/ruby -e 'print RUBY_VERSION' 2>/dev/null)" != "$RUBY_VERSI
+   cd "$work"
+   tar -xzf ruby.tar.gz
+   cd "ruby-$RUBY_VERSION"
+-  ./configure --prefix=/opt/ruby --enable-yjit --with-jemalloc --disable-install-doc --disable-install-rdoc \
+-    cflags="$NATIVE"
++  # Hardening costs CPU in the interpreter and in every C extension (rbconfig's cflags carry it into
++  # gem builds): no stack protector, no FORTIFY, no pointer authentication / CET / stack-clash probes
++  # (Ubuntu's GCC turns these on by default, so each needs its explicit -fno-/-U form). -fno-plt turns calls into jemalloc and libc into direct GOT loads.
++  NOHARDEN="-fno-stack-protector -U_FORTIFY_SOURCE -fno-stack-clash-protection -fno-plt"
++  [ "$(uname -m)" = x86_64 ] && NOHARDEN="$NOHARDEN -fcf-protection=none"
++  [ "$(uname -m)" = aarch64 ] && NOHARDEN="$NOHARDEN -mbranch-protection=none"
++  stack_protector=no ./configure --prefix=/opt/ruby --enable-yjit --with-jemalloc --disable-install-doc --disable-install-rdoc \
++    --disable-fortify-source cflags="$NATIVE $NOHARDEN"
+   make -j"$(nproc)"
+   make install
+ fi

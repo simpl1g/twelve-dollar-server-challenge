@@ -1,0 +1,33 @@
+diff --git a/README.md b/README.md
+index 9202e9b62bb3600f56ef95a0ada70b5e5549424a..b8c24c29ade823fd1bd9708d3706cf25df8e2be6 100644
+--- a/README.md
++++ b/README.md
+@@ -63,7 +63,12 @@ version keeps the Async reactor and replaces the HTTP server.
+   append per batch instead of one per write.
+ - **Pragmas**: `locking_mode=EXCLUSIVE`, so the WAL index lives in heap memory rather than the `-shm`
+   file; `journal_mode=WAL`; `synchronous=NORMAL` (rule 6); `wal_autocheckpoint=0`, with a passive
+-  checkpoint every second, off the commit path. Every statement is reset as soon as its row has been read, because a statement left mid-step holds a read transaction and blocks checkpoints. Before that fix the WAL grew past 300 MB under load, and WAL lookups (`walFindFrame`) took 30% of the CPU; 1 GiB `mmap_size`; 64 MiB page cache.
++  checkpoint every second, off the commit path. Every statement is reset as soon as its row has been read, because a statement left mid-step holds a read transaction and blocks checkpoints. Before that fix the WAL grew past 300 MB under load, and WAL lookups (`walFindFrame`) took 30% of the CPU. `mmap_size=0` with a 64 MiB page cache (`cache_size=-65536`): pages are served from
++  SQLite's own page cache rather than a 1 GiB `mmap`. A memory-mapped page is not retained in the page
++  cache, so every acquisition re-parses it (`btreeInitPage`) and looks it up in the WAL index again,
++  while a page-cache hit returns the already-parsed page. The load test's working set (hot feed pages
++  plus the `likes` and `posts` index leaves it touches, ~40 MB) fits the cache, so nothing is evicted,
++  and RSS is lower than with the mapping because only the working set is held.
+ - **SQLite compiled for this workload.** It's a static library built with sqlite.org's recommended
+   options (`DQS=0`, `DEFAULT_MEMSTATUS=0`, `OMIT_DEPRECATED`, `OMIT_SHARED_CACHE`, `USE_ALLOCA`, and so
+   on). It's then profile-guided: `sqlite_train.c` runs the server's own statements in the load test's
+diff --git a/app.rb b/app.rb
+index 16920d847804f7d271d50453734da43c1c27399a..6ffd1384054926b709c4f080298ca5c2f98b7b02 100644
+--- a/app.rb
++++ b/app.rb
+@@ -44,7 +44,9 @@ class Store
+     @db.execute("PRAGMA synchronous=NORMAL")
+     @db.execute("PRAGMA foreign_keys=ON")
+     @db.execute("PRAGMA wal_autocheckpoint=0") # checkpoints run on a timer, off the commit path
+-    @db.execute("PRAGMA mmap_size=1073741824")
++    # No mmap: a mapped page is re-parsed and looked up in the WAL index on every acquisition,
++    # while a page-cache hit keeps the parsed page. The ~40 MB working set fits the 64 MiB cache.
++    @db.execute("PRAGMA mmap_size=0")
+     @db.execute("PRAGMA cache_size=-65536")
+     @db.execute("PRAGMA temp_store=MEMORY")
+     @feed = @db.prepare_splat(FEED)

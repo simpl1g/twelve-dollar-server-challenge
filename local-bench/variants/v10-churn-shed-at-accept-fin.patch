@@ -1,0 +1,199 @@
+diff --git a/README.md b/README.md
+index 9202e9b62bb3600f56ef95a0ada70b5e5549424a..96ee6243815ac20798fd9b52d63be4987231e0d0 100644
+--- a/README.md
++++ b/README.md
+@@ -78,8 +78,21 @@ version keeps the Async reactor and replaces the HTTP server.
+ - **Likes in one statement**: `INSERT ... SELECT ... WHERE EXISTS (post) ON CONFLICT DO NOTHING`. A
+   post-existence check runs only when nothing was inserted, to tell "already liked" from "no such post".
+ - **Direct instead of Nginx.** On one core, Nginx's CPU comes out of Ruby's budget, and the provided
+-  `nginx.conf` caps out near 16k connections. Responses switch to `Connection: close` only within 256
+-  descriptors of the process's file limit, so clients aren't forced to reconnect under normal load.
++  `nginx.conf` caps out near 16k connections. Until the process is within 448 descriptors of its file
++  limit nothing changes: connections stay keep-alive and clients aren't forced to reconnect under
++  normal load.
++- **Shed at accept, close to the descriptor limit.** Within those 448 descriptors, new connections
++  are shed: the accept loop hands them straight to a worker, which reads the first request through
++  the scheduler (so the connection is never registered in epoll and raises no epoll event), answers
++  it with `Connection: close` and closes it. Incumbent keep-alive connections are left alone until
++  the population is within 256 descriptors of the limit, where every served connection is closed,
++  as before (the last-resort guard). A shed connection has 10 s (`IO#timeout`) to send its request
++  and take its response. At most 2,048 shed connections wait for their request at once; past that,
++  new connections go to epoll as usual.
++- **The FIN rides on the last response.** A connection's last response (`Connection: close`, or
++  an HTTP/1.0 client) is sent with `MSG_MORE`, so the kernel holds its final partial segment and
++  sends it in the same segment as the FIN that `close` raises: one segment fewer per retired
++  connection. Bytes on the wire are unchanged.
+ - **TCP_NODELAY is set on the listener** and inherited by accepted sockets on Linux, so there is
+   no `setsockopt` per connection.
+ 
+@@ -169,9 +182,10 @@ Test suite: 42/42 on x86_64.
+ ## Trade-offs
+ 
+ - Linux only, because epoll is bound through FFI.
+-- No idle timeout. Connections stay open until the client closes them, and the descriptor guard
+-  covers the extreme case. A worker that picks up a stale edge-triggered event waits on that
+-  connection until the client sends or closes; the growable pool keeps that from starving others.
++- No idle timeout for keep-alive connections. They stay open until the client closes them, and the
++  descriptor guard covers the extreme case (only shed connections, close to the limit, have 10 s).
++  A worker that picks up a stale edge-triggered event waits on that connection until the client
++  sends or closes; the growable pool keeps that from starving others.
+ - Reads call io-event's scheduler `io_read` directly with an `IO::Buffer`, which Ruby still marks
+   experimental (it prints a warning at startup). On an epoll-only kernel it still works, unbatched.
+ - The parser covers what this API needs: no chunked request bodies and no `Expect: 100-continue`.
+diff --git a/http.rb b/http.rb
+index 617ed67b6fa1ed66138adc83f6914bb23f1f9153..a408824877a99953d4e2ed8247acb792c6e1b222 100644
+--- a/http.rb
++++ b/http.rb
+@@ -12,6 +12,9 @@ require_relative "epoll"
+ # readable through the reactor, and a pool of worker fibers serves the connections that are ready.
+ # A fiber per connection would keep the stack pages each one touched while serving (deep SQLite
+ # calls), which costs ~70 KB per idle connection.
++#
++# Close to the descriptor limit, new connections are shed instead: a worker reads their first
++# request directly, answers it with `Connection: close` and closes them, so they never enter epoll.
+ class HTTPServer
+   READ_SIZE = 8192
+   MAX_HEAD = 16 * 1024
+@@ -19,6 +22,8 @@ class HTTPServer
+   WORKERS = 256
+   MAX_WORKERS = 4096 # the pool grows past WORKERS only if every worker is busy
+   MAX_EVENTS = 1024
++  MAX_SHED = 2048 # shed connections that may wait for their first request at once
++  SHED_TIMEOUT = 10 # seconds a shed connection gets to send its request and take its response
+ 
+   REASONS = {
+     200 => "OK", 201 => "Created", 400 => "Bad Request", 401 => "Unauthorized", 404 => "Not Found",
+@@ -55,7 +60,12 @@ class HTTPServer
+     soft = Process.getrlimit(:NOFILE).first
+     # Last-resort guard: only close to the descriptor limit do responses carry `Connection: close`.
+     @budget = connection_budget || [soft - 256, soft * 9 / 10].max
++    # Within 192 descriptors of the budget, new connections are shed: served once, with
++    # `Connection: close`, and never registered in epoll. Served incumbents stay keep-alive up to
++    # the budget itself.
++    @shed_from = @budget - 192
+     @open = 0
++    @shed_in_flight = 0
+   end
+ 
+   attr_reader :open
+@@ -65,7 +75,7 @@ class HTTPServer
+     @epfd = Epoll.create
+     @event = Epoll.event(Epoll::IN | Epoll::RDHUP | Epoll::ET)
+     @sockets = [] # by descriptor
+-    @state = [] # by descriptor: IDLE, BUSY (queued or being served) or AGAIN (busy, and new data came)
++    @state = [] # by descriptor: IDLE, BUSY (queued or being served), AGAIN (busy, and new data came) or SHED
+     @partial = {} # descriptor => bytes of a request that hasn't fully arrived
+     @ready = Thread::Queue.new
+     @workers = @waiting = 0
+@@ -100,8 +110,17 @@ class HTTPServer
+       @open += 1
+       fd = socket.fileno
+       @sockets[fd] = socket
+-      @state[fd] = IDLE
+-      Epoll.control(@epfd, Epoll::CTL_ADD, fd, @event)
++      if @open > @shed_from && @shed_in_flight < MAX_SHED
++        # Shed: a worker reads its first request directly; IO#timeout bounds that wait and the write.
++        socket.timeout = SHED_TIMEOUT
++        @state[fd] = SHED
++        @shed_in_flight += 1
++        @ready.push(fd)
++        add_worker if @waiting < @ready.size && @workers < MAX_WORKERS
++      else
++        @state[fd] = IDLE
++        Epoll.control(@epfd, Epoll::CTL_ADD, fd, @event)
++      end
+     rescue Errno::EMFILE, Errno::ENFILE, Errno::ENOBUFS, Errno::ENOMEM
+       sleep 0.01 # out of descriptors: let responses retire connections, then accept again
+     rescue Errno::ECONNABORTED, Errno::EPROTO
+@@ -114,10 +133,12 @@ class HTTPServer
+   IDLE = 0
+   BUSY = 1
+   AGAIN = 2
++  SHED = 3 # not in the epoll set: served once by a worker, then closed
+ 
+   # Waits (through the reactor) for the epoll set to have ready connections, then queues them.
+   # A connection that is already queued or being served is only flagged, so one worker serves it
+   # at a time (requests stay in order) and the worker reads it again before letting it go idle.
++  # A stale event for a reused descriptor (closed, or now SHED) matches no state and is ignored.
+   def dispatch
+     poller = IO.for_fd(@epfd, autoclose: false)
+     events = Epoll.events(MAX_EVENTS)
+@@ -161,11 +182,15 @@ class HTTPServer
+   # used where data is expected: a connection whose new data was already read in an earlier pass
+   # (a stale edge) would hold this worker until its client sends again, which is why the pool can
+   # grow. Re-reads after AGAIN, and reads past a full buffer, don't wait.
++  #
++  # A shed connection comes straight from `accept`, not from epoll: the same first read picks up
++  # its request when it arrives, its one response closes it, and nothing else can wake it.
+   def service(fd, io_buffer)
+     socket = @sockets[fd] or return
++    shed = @state[fd] == SHED
+     wait = true
+     loop do
+-      @state[fd] = BUSY
++      @state[fd] = BUSY unless shed
+       buffer = @partial.delete(fd)
+       loop do
+         data = if wait
+@@ -183,9 +208,13 @@ class HTTPServer
+       end
+ 
+       if buffer
+-        rest = drain(socket, buffer) or return disconnect(fd, socket)
++        rest = drain(socket, buffer, shed) or return disconnect(fd, socket)
+         @partial[fd] = rest unless rest.empty?
+       end
++      if shed # not in epoll: wait here for the rest of the request (IO#timeout bounds the wait)
++        socket.wait_readable
++        next
++      end
+       next if @state[fd] == AGAIN
+ 
+       @state[fd] = IDLE
+@@ -196,6 +225,7 @@ class HTTPServer
+   end
+ 
+   def disconnect(fd, socket)
++    @shed_in_flight -= 1 if @state[fd] == SHED
+     @sockets[fd] = nil
+     @state[fd] = nil
+     @partial.delete(fd)
+@@ -207,7 +237,7 @@ class HTTPServer
+ 
+   # Answers every complete request in `buffer`, in order. Returns the unconsumed tail (possibly
+   # empty), or nil when the connection must be closed.
+-  def drain(socket, buffer)
++  def drain(socket, buffer, shed = false)
+     position = 0
+     size = buffer.bytesize
+     while position < size
+@@ -263,7 +293,7 @@ class HTTPServer
+ 
+       body = buffer.byteslice(body_start, length) if length.positive?
+       status, document = @app.call(method, path, authorization, body)
+-      close ||= @open > @budget
++      close ||= shed || @open > @budget
+       respond(socket, close ? CLOSE : (http10 ? KEEP_10 : KEEP), status, document)
+       return nil if close
+ 
+@@ -285,11 +315,17 @@ class HTTPServer
+     head = heads[status] || heads[500]
+     out = String.new(head, capacity: head.bytesize + 8 + document.bytesize)
+     out << document.bytesize.to_s << END_HEAD << document
+-    write(socket, out)
++    write(socket, out, heads.equal?(CLOSE))
+   end
+ 
+   # Through the fiber scheduler: with io_uring, every worker's write is queued and submitted together.
+-  def write(socket, data)
+-    socket.write(data)
++  # A connection's last response is sent with MSG_MORE instead: the kernel holds its final partial
++  # segment and sends it together with the FIN that `close` raises, one segment fewer.
++  def write(socket, data, last = false)
++    return socket.write(data) unless last
++
++    size = data.bytesize
++    sent = socket.send(data, Socket::MSG_MORE)
++    sent += socket.send(data.byteslice(sent, size - sent), Socket::MSG_MORE) while sent < size
+   end
+ end

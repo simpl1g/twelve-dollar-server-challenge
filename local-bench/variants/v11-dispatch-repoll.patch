@@ -1,0 +1,74 @@
+diff --git a/README.md b/README.md
+index 9202e9b62bb3600f56ef95a0ada70b5e5549424a..d240b2510d10645ad327aaabf376fd84de21e9e5 100644
+--- a/README.md
++++ b/README.md
+@@ -29,7 +29,10 @@ version keeps the Async reactor and replaces the HTTP server.
+ 
+ - **Idle connections own no fiber.** An idle keep-alive connection sits in a kernel epoll set and
+   owns no Ruby fiber. Each connection is registered once, edge-triggered, so there is no `epoll_ctl`
+-  per request. One Async task waits on that epoll descriptor through the reactor. A pool of 256
++  per request. One Async task polls that epoll set with a zero timeout; after a pass that found
++  ready connections it yields to let the workers it queued run and polls again, and only parks on
++  the reactor's wait for the epoll descriptor once a pass finds nothing (so a burst costs one
++  io_uring poll instead of one per pass, and an idle server does not spin). A pool of 256
+   worker fibers (it grows, up to 4096, only when every worker is busy) reads each ready connection,
+   answers every complete request in its buffer in order, and writes each response with one `write`.
+   Memory is about 3–5 KB per connection (about 130 MB at 40k), and GC drops from about 4 s to about
+diff --git a/epoll.rb b/epoll.rb
+index f0777a7c38eabc82d73e6208aa0ff76de830b1f8..bd9eb3bbde38adec29436f3276ed5b9b59fc310d 100644
+--- a/epoll.rb
++++ b/epoll.rb
+@@ -46,13 +46,15 @@ module Epoll
+     raise SystemCallError.new("epoll_ctl", FFI.errno)
+   end
+ 
+-  # Yields each ready descriptor without blocking.
++  # Yields each ready descriptor without blocking and returns how many there were (0 if the wait failed).
+   def self.ready(epfd, events, count)
+     ready = epoll_wait(epfd, events, count, 0)
++    ready = 0 if ready.negative?
+     index = 0
+     while index < ready
+       yield events.get_uint64(index * SIZE + DATA)
+       index += 1
+     end
++    ready
+   end
+ end
+diff --git a/http.rb b/http.rb
+index 617ed67b6fa1ed66138adc83f6914bb23f1f9153..24721fde7b8975dc80466e7ef7c3815fca92b203 100644
+--- a/http.rb
++++ b/http.rb
+@@ -115,15 +115,14 @@ class HTTPServer
+   BUSY = 1
+   AGAIN = 2
+ 
+-  # Waits (through the reactor) for the epoll set to have ready connections, then queues them.
+-  # A connection that is already queued or being served is only flagged, so one worker serves it
+-  # at a time (requests stay in order) and the worker reads it again before letting it go idle.
++  # Polls the epoll set without blocking and queues each ready connection; after a non-empty pass
++  # it yields so this pass's workers run, then polls again, and parks on the reactor only once
++  # the set is drained. A queued or busy connection is only flagged, so one worker serves it at a time.
+   def dispatch
+     poller = IO.for_fd(@epfd, autoclose: false)
+     events = Epoll.events(MAX_EVENTS)
+-    loop do
+-      poller.wait_readable
+-      Epoll.ready(@epfd, events, MAX_EVENTS) do |fd|
++    while true
++      count = Epoll.ready(@epfd, events, MAX_EVENTS) do |fd|
+         case @state[fd]
+         when IDLE
+           @state[fd] = BUSY
+@@ -133,6 +132,11 @@ class HTTPServer
+           @state[fd] = AGAIN
+         end
+       end
++      if count.positive?
++        Fiber.scheduler.yield # let this pass's workers run, then poll epoll again without a wait
++      else
++        poller.wait_readable # nothing pending: park on the reactor's poll of the epoll descriptor
++      end
+     end
+   end
+ 

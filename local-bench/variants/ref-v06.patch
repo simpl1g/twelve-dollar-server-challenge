@@ -1,0 +1,119 @@
+diff --git a/http.rb b/http.rb
+index 617ed67b6fa1ed66138adc83f6914bb23f1f9153..d9e0cdea66d0e7a6e838b4ca35c08f67e4234975 100644
+--- a/http.rb
++++ b/http.rb
+@@ -16,7 +16,7 @@ class HTTPServer
+   READ_SIZE = 8192
+   MAX_HEAD = 16 * 1024
+   MAX_BODY = 1024 * 1024
+-  WORKERS = 256
++  WORKERS = 64
+   MAX_WORKERS = 4096 # the pool grows past WORKERS only if every worker is busy
+   MAX_EVENTS = 1024
+ 
+@@ -60,6 +60,18 @@ class HTTPServer
+ 
+   attr_reader :open
+ 
++  Worker = Struct.new(:fiber, :fd, :io_buffer)
++
++  # Called once a second: idle workers beyond WORKERS exit as they come back around.
++  def trim_workers
++    surplus = @idle.size - WORKERS
++    @shrink = surplus if surplus > 0
++  end
++
++  def stats
++    "workers=#{@workers} idle=#{@idle.size} backlog=#{@backlog.size}"
++  end
++
+   def run(task)
+     @task = task
+     @epfd = Epoll.create
+@@ -67,8 +79,10 @@ class HTTPServer
+     @sockets = [] # by descriptor
+     @state = [] # by descriptor: IDLE, BUSY (queued or being served) or AGAIN (busy, and new data came)
+     @partial = {} # descriptor => bytes of a request that hasn't fully arrived
+-    @ready = Thread::Queue.new
+-    @workers = @waiting = 0
++    @idle = [] # LIFO stack of Worker: the most recently used worker serves next
++    @backlog = [] # ready descriptors that found no idle worker at MAX_WORKERS
++    @workers = 0
++    @shrink = 0 # workers that exit when they next return to the top of their loop
+     WORKERS.times { add_worker }
+     task.async { dispatch }
+     task.async { accept_loop }
+@@ -127,8 +141,18 @@ class HTTPServer
+         case @state[fd]
+         when IDLE
+           @state[fd] = BUSY
+-          @ready.push(fd)
+-          add_worker if @waiting < @ready.size && @workers < MAX_WORKERS
++          worker = @idle.pop
++          if !worker && @workers < MAX_WORKERS
++            @shrink = 0
++            add_worker # runs until its first suspension: the new worker is on @idle
++            worker = @idle.pop
++          end
++          if worker
++            worker.fd = fd
++            Fiber.scheduler.push(worker.fiber)
++          else
++            @backlog.push(fd)
++          end
+         when BUSY
+           @state[fd] = AGAIN
+         end
+@@ -142,14 +166,24 @@ class HTTPServer
+   end
+ 
+   def work
+-    io_buffer = IO::Buffer.new(READ_SIZE)
+-    loop do
+-      @waiting += 1
+-      fd = @ready.pop
+-      @waiting -= 1
+-      service(fd, io_buffer)
+-    rescue StandardError => error
+-      Console.error(self, error)
++    worker = Worker.new(Fiber.current, nil, IO::Buffer.new(READ_SIZE))
++    while true
++      if @shrink > 0
++        @shrink -= 1
++        @workers -= 1
++        return
++      end
++      fd = @backlog.shift
++      unless fd
++        @idle.push(worker)
++        Fiber.scheduler.transfer # resumed by dispatch with worker.fd set
++        fd = worker.fd
++      end
++      begin
++        service(fd, worker.io_buffer)
++      rescue StandardError => error
++        Console.error(self, error)
++      end
+     end
+   end
+ 
+diff --git a/server.rb b/server.rb
+index b011fefdc2451ae93dd2c02a14b719e14085394d..a72ad80e791147414f21763689a38bdab55bebcf 100644
+--- a/server.rb
++++ b/server.rb
+@@ -31,9 +31,15 @@ Process.warmup if Process.respond_to?(:warmup)
+ 
+ Async do |task|
+   task.async do
++    tick = 0
+     loop do
+       sleep 1
+       store.checkpoint
++      server.trim_workers
++      tick += 1
++      if tick % 10 == 0
++        $stderr.puts "pool #{server.stats} minor_gc=#{GC.stat(:minor_gc_count)} gc_ms=#{GC.stat(:time)}"
++      end
+     end
+   end
+ 

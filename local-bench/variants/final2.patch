@@ -1,0 +1,895 @@
+diff --git a/README.md b/README.md
+index 9202e9b62bb3600f56ef95a0ada70b5e5549424a..f3e7475e12cd0c724baec2dcfb3d1c303bf151b7 100644
+--- a/README.md
++++ b/README.md
+@@ -29,17 +29,43 @@ version keeps the Async reactor and replaces the HTTP server.
+ 
+ - **Idle connections own no fiber.** An idle keep-alive connection sits in a kernel epoll set and
+   owns no Ruby fiber. Each connection is registered once, edge-triggered, so there is no `epoll_ctl`
+-  per request. One Async task waits on that epoll descriptor through the reactor. A pool of 256
+-  worker fibers (it grows, up to 4096, only when every worker is busy) reads each ready connection,
+-  answers every complete request in its buffer in order, and writes each response with one `write`.
++  per request. One Async task waits on that epoll descriptor through the reactor. A pool of 64
++  resident worker fibers (it grows, up to 4096, only when every worker is busy, and is trimmed back
++  once a second) reads each ready connection, answers every complete request in its buffer in
++  order, and writes each response with one `write`.
+   Memory is about 3–5 KB per connection (about 130 MB at 40k), and GC drops from about 4 s to about
+   0.15 s per minute.
++- **Worker hand-off: a LIFO stack and direct scheduler pushes.** Idle workers used to block on a
++  `Thread::Queue#pop` (the fiber scheduler's `block`/`unblock` under the hood) and were woken in
++  FIFO order. Now an idle worker parks itself on a plain array used as a stack and transfers back
++  to the reactor; the dispatcher pops the most recently parked worker, whose stack pages are still
++  cache-warm, sets its descriptor and pushes its fiber straight onto the reactor's ready queue
++  (`Fiber.scheduler.push`). Every ready descriptor of an epoll pass gets its own push in that pass,
++  so all of a pass's workers are runnable together and the group-commit batch is the same as
++  before. When no worker is idle the pool grows (to at most 4096; past that, descriptors wait in a
++  backlog that returning workers drain first). Once a second, the longest-idle workers beyond the
++  64 resident ones, the bottom of the stack, are woken without a descriptor and exit, at most 32
++  per tick, so a burst's pool drains over a few seconds instead of thrashing, and a suspended
++  fiber that is no longer needed stops being a root for every minor GC to mark (about 1.2 µs per
++  suspended fiber per minor GC). Every 10 s the server prints one `pool ...` line on stderr with
++  the pool size, idle and backlogged counts, open connections, group commits and GC counters.
++  Expected effect: small. The hand-off itself is about 0.3 µs per request cheaper than
++  `Thread::Queue` (0.6 vs 0.8–1.0 µs per job in a micro-benchmark), the GC and locality effects
++  are below 1% of CPU, and RSS at 80k users drops by 1–2%.
+ - **A minimal HTTP/1.1 parser.** It reads the request line and the four headers the API uses:
+   `Content-Length`, `Transfer-Encoding`, `Connection` and `Authorization`. It supports keep-alive,
+   pipelining, partial reads, HTTP/1.0 and `Connection: close`. Chunked request bodies get a 411.
+-  Response heads are prebuilt frozen strings. The header regex takes each value greedily and trims
+-  trailing blanks afterwards: the lazy form with a lookahead backtracked along the 200-byte bearer
+-  token and cost 5.7 µs per POST head against 2.9 µs now.
++  Response heads are prebuilt frozen strings, and each response is assembled with one string
++  interpolation (`String.new(capacity:)` cost two extra allocations per response). The header
++  lines are walked byte by byte with `byteindex`: a name is matched by length and first letter
++  before anything is sliced, so a GET carrying `Host`, `User-Agent` and `Accept-Encoding` allocates
++  nothing for its headers, and a POST head with a 200-byte bearer token takes about 1 µs against
++  6 µs for the regex scan it replaces (18 objects down to 9). Names are case-insensitive, blanks
++  before the colon and around the value are ignored, and lines without a colon are skipped. The
++  colon search is memoized across lines, so a head made of colon-less lines in front of a large
++  body scans the buffer once. A bare CR or LF inside a header line is now rejected (the whole line
++  is the value, so such a `Content-Length` gets a 400) where the regex silently cut the value
++  short; that is the RFC 9112 reading, and no HTTP client sends one.
+ - **YJIT is warm before the first request.** `start.sh` sets `--yjit-call-threshold=5` (default 30),
+   and at startup the server runs the feed, a single post, a JWT verification with a body parse, and a
+   like with an invalid id 50 times each through its own parser and app over a socket pair, so the
+@@ -57,13 +83,33 @@ version keeps the Async reactor and replaces the HTTP server.
+   The single-post query binds its id as `p.id=+?`: with a plain `?` in that join, SQLite treated the
+   plan as depending on the bound value and recompiled the statement on every request. The `+` keeps
+   the same plan and output and halves that query's time (14 to 7 µs).
+-- **Group commit.** The first write in a reactor pass opens `BEGIN IMMEDIATE`, every write in that pass
+-  joins the transaction, and one `COMMIT` runs on the next pass. No write response goes out before its
+-  `COMMIT` returns, and reads that ran while a batch was open wait for it too. That gives one WAL
+-  append per batch instead of one per write.
++- **The feed aggregates without a sorter.** `/feed` is `group_concat` over a 20-row subquery that
++  already runs `ORDER BY created_at DESC, id DESC LIMIT 20` as a co-routine on
++  `posts_created_at_id_idx`. The earlier text repeated that `ORDER BY` inside `group_concat`, and
++  SQLite served it with a temp b-tree (`USE TEMP B-TREE FOR group_concat(ORDER BY)`): every feed
++  re-sorted 20 rows it had just received in order. Without it the plan is the same co-routine, 59
++  VDBE opcodes instead of 71, and the feed statement costs about 23 µs instead of 32 (feeds are 46%
++  of requests). The bytes are identical: ties on `created_at` are still broken by `id DESC` inside
++  the subquery, and an empty table still yields `{"posts":[]}`. SQLite documents `group_concat`
++  order as arbitrary without `ORDER BY`, so this relies on the co-routine delivery order of the
++  pinned SQLite 3.54.0 build and is enforced at boot: `Store#initialize` runs the new and the old
++  (sorted) text once, compares the documents and checks `EXPLAIN QUERY PLAN` for a temp b-tree; if
++  either check fails it warns and prepares the sorted text instead. Both boot documents are
++  discarded; nothing is cached across requests.
++- **Group commit as one deferred flush.** A write only queues its statement and yields once, so every
++  write that is ready in the same reactor pass queues too. The first writer back from its yield runs
++  the whole queue inside one `BEGIN IMMEDIATE ... COMMIT`, synchronously, and each write answers only
++  after that `COMMIT` has returned. That gives one WAL append per batch instead of one per write, with
++  no task, fiber or promise per batch. No transaction is ever open across a fiber switch, so reads
++  never see uncommitted rows and never wait for a batch.
+ - **Pragmas**: `locking_mode=EXCLUSIVE`, so the WAL index lives in heap memory rather than the `-shm`
+   file; `journal_mode=WAL`; `synchronous=NORMAL` (rule 6); `wal_autocheckpoint=0`, with a passive
+-  checkpoint every second, off the commit path. Every statement is reset as soon as its row has been read, because a statement left mid-step holds a read transaction and blocks checkpoints. Before that fix the WAL grew past 300 MB under load, and WAL lookups (`walFindFrame`) took 30% of the CPU; 1 GiB `mmap_size`; 64 MiB page cache.
++  checkpoint every second, off the commit path. Every statement is reset as soon as its row has been read, because a statement left mid-step holds a read transaction and blocks checkpoints. Before that fix the WAL grew past 300 MB under load, and WAL lookups (`walFindFrame`) took 30% of the CPU. `mmap_size=0` with a 64 MiB page cache (`cache_size=-65536`): pages are served from
++  SQLite's own page cache rather than a 1 GiB `mmap`. A memory-mapped page is not retained in the page
++  cache, so every acquisition re-parses it (`btreeInitPage`) and looks it up in the WAL index again,
++  while a page-cache hit returns the already-parsed page. The load test's working set (hot feed pages
++  plus the `likes` and `posts` index leaves it touches, ~40 MB) fits the cache, so nothing is evicted,
++  and RSS is lower than with the mapping because only the working set is held.
+ - **SQLite compiled for this workload.** It's a static library built with sqlite.org's recommended
+   options (`DQS=0`, `DEFAULT_MEMSTATUS=0`, `OMIT_DEPRECATED`, `OMIT_SHARED_CACHE`, `USE_ALLOCA`, and so
+   on). It's then profile-guided: `sqlite_train.c` runs the server's own statements in the load test's
+@@ -71,12 +117,25 @@ version keeps the Async reactor and replaces the HTTP server.
+   faster.
+ - **One thread, and SQLite never releases the GVL.** Every query is an index lookup that takes
+   microseconds, so releasing and reacquiring the GVL would cost more than it saves.
+-- **JWT verified on every request**, with no caching (rule 5). libsodium's one-shot HMAC-SHA256 takes
+-  1.6 µs, compared with 3.5 µs through OpenSSL's HMAC in Ruby, and signatures are compared in
+-  constant time. The standard `{"alg":"HS256","typ":"JWT"}` header is compared as a string, and any
+-  other header is parsed and must say `HS256`. `exp`, `nbf`, `sub` and `username` are checked.
+-- **Likes in one statement**: `INSERT ... SELECT ... WHERE EXISTS (post) ON CONFLICT DO NOTHING`. A
+-  post-existence check runs only when nothing was inserted, to tell "already liked" from "no such post".
++- **JWT verified on every request**, with no caching (rule 5). The keyed HMAC-SHA256 state (the
++  secret's inner and outer pads, 208 bytes) is computed once at startup from `JWT_SECRET`; each
++  verification copies it and runs libsodium's `update` and `final` over the signing input, 1.1 µs
++  against 1.6 µs for the one-shot call (3.5 µs through OpenSSL's HMAC in Ruby). Every token's MAC
++  is computed and compared in constant time with `crypto_verify_32`. The token is checked once for
++  characters outside the base64url alphabet (`+`, `/`, `=`), and the strict decoder
++  (`unpack1("m0")`) rejects everything else the previous per-segment regex did, so the 43-character
++  signature always decodes to exactly 32 bytes. The standard `{"alg":"HS256","typ":"JWT"}` header
++  is compared as a string, and any other header is parsed and must say `HS256`. `exp`, `nbf`, `sub`
++  and `username` are checked.
++- **Trimming a post body skips the regex when it can.** Every character in JavaScript's
++  `String#trim` set is ASCII below 0x21 or a multibyte sequence, so a body whose first and last
++  bytes are printable ASCII has nothing to trim and the `gsub` (11.5 µs on a 500-character body) is
++  skipped. The single-post lookup also drops a redundant `reset`: extralite's `Query#bind` resets
++  the statement itself (the reset after the row is read stays, so no read transaction outlives it).
++- **Likes in one statement**: `INSERT ... VALUES ... ON CONFLICT DO NOTHING`; one changed row means
++  "liked", none means "already liked". The foreign key on `likes.post_id` (`foreign_keys=ON`) rejects a
++  like of a missing post, and only on that constraint error does a post-existence check run, to tell a
++  missing post (404) from a missing user (500).
+ - **Direct instead of Nginx.** On one core, Nginx's CPU comes out of Ruby's budget, and the provided
+   `nginx.conf` caps out near 16k connections. Responses switch to `Connection: close` only within 256
+   descriptors of the process's file limit, so clients aren't forced to reconnect under normal load.
+@@ -176,6 +235,36 @@ Test suite: 42/42 on x86_64.
+   experimental (it prints a warning at startup). On an epoll-only kernel it still works, unbatched.
+ - The parser covers what this API needs: no chunked request bodies and no `Expect: 100-continue`.
+ 
++## stack7 (local-bench variant note)
++
++stack7 = stack5 (v01 feed-no-sorter, v04 group-commit deferred flush, v05 http/app micro trims, v06
++worker-pool LIFO/shrink, v09 mmap_size=0) + v10 churn shed-at-accept, 3-way merged into http.rb with
++the submission as base. Within 192 descriptors of the budget `accept_loop` marks a newcomer SHED
++(`socket.timeout = 10`), hands it to a worker the way `dispatch` does (pop `@idle`, grow the pool, else
++`@backlog`; v10's `@ready` queue no longer exists) and `drain` answers it once with `Connection: close`;
++`respond` keeps stack5's single interpolation and passes v10's `last` flag (MSG_MORE, FIN on the last segment).
++
+ ## License
+ 
+ MIT, under the repo's [license](../../LICENSE).
++
++## final2
++
++final2 is stack7 promoted: the five stack5 edits (v01 feed-no-sorter, v04 group-commit deferred
++flush, v05 http/app micro trims, v06 worker-pool LIFO/shrink, v09 mmap_size=0) plus v10 churn
++shed-at-accept (http.rb only: newcomers that arrive over the descriptor budget are answered once
++with `Connection: close` and closed at accept time instead of being parked and closed after serving).
++Phase 3 numbers vs stack5, sign-corrected means over swapped pairs: 20k -1.2 % us/req (pairs
++stack7-p1/p2), 80k -4.3 % (pairs stack7-c1r/c2; -7.3 % and -1.4 % per seat), both images pass every
++clean run, shed path exercised at 80k (peak_connections 65.4-66.3k >= fd budget 65,279); stack7 makes
++~1.5 % more connects. 150k/187.5k pairs vs stack5 were loadgen-bound or skipped for disk. Keep rule
++applied: promote only when the sign-corrected mean is <= 0 at every load tested and there is no pair
++where stack5 passes and the variant fails. test/test.sh 42/42.
++Image: final2 = stack7 + `socket.shutdown(Socket::SHUT_WR)` right after the MSG_MORE send of a connection's
++last response. With unread input still queued on the server socket (oversized 413/431/400 rejects, pipelined
++requests) a bare `close()` sends RST and discards the corked segment, so the client sees only ECONNRESET; the
++review measured 413 delivered 20/20 on stack5 against 8/20 and 15/20 on stack7. `shutdown` raises the FIN
++while the segment is still in the send queue, so the one-segment saving stays and the response is delivered.
++Image id: 6f312e85c53e (sha256:6f312e85c53e03c473734c215989ab83eca6e9fe80cb41f63975c9d47bc76649);
++tdsc-cicloid:stack7 stays e77fcbf98c89. The earlier final2-* result files were produced by the stack7
++image under the final2 tag.
+diff --git a/app.rb b/app.rb
+index 16920d847804f7d271d50453734da43c1c27399a..e7da6ecba7794bbaa01d7ba80a7b4133ff74b58f 100644
+--- a/app.rb
++++ b/app.rb
+@@ -1,39 +1,51 @@
+ # frozen_string_literal: true
+ 
+ require "async"
+-require "async/promise"
+ require "extralite"
+ require "json"
+ require "rbnacl"
+ 
+-# libsodium's one-shot HMAC-SHA256 and constant-time compare, bound through rbnacl's FFI layer.
++# libsodium's HMAC-SHA256 (one-shot for the warm-up; keyed state, update and final for requests) and
++# constant-time compare, bound through rbnacl's FFI layer. The raw functions return 0 on success.
+ module Sodium
+   extend RbNaCl::Sodium
+ 
+   sodium_function :hmac_sha256, :crypto_auth_hmacsha256, %i[pointer pointer ulong_long pointer]
+-  sodium_function :verify32, :crypto_verify_32, %i[pointer pointer]
++  attach_function :crypto_auth_hmacsha256_statebytes, [], :size_t
++  attach_function :crypto_auth_hmacsha256_init, %i[pointer pointer size_t], :int
++  attach_function :crypto_auth_hmacsha256_update, %i[pointer pointer ulong_long], :int
++  attach_function :crypto_auth_hmacsha256_final, %i[pointer pointer], :int
++  attach_function :crypto_verify_32, %i[pointer pointer], :int
+ end
+ 
+ # One SQLite connection, owned by the single reactor thread. SQLite renders every response
+ # document, so Ruby only routes, verifies the JWT and hands the bytes to the HTTP layer.
+ #
+-# Group commit: the first write in a reactor pass opens BEGIN IMMEDIATE and schedules one COMMIT
+-# for the next pass. Every write in between joins that transaction, and every response waits for
+-# the COMMIT. Reads that run while a batch is open may have seen its rows, so they wait too.
++# Group commit: a write only queues its statement and yields once, so every write that is ready in
++# this reactor pass queues too. The first writer back from its yield runs the whole queue inside one
++# BEGIN IMMEDIATE ... COMMIT, synchronously. No transaction is ever open across a fiber switch, so
++# reads never see uncommitted rows and never wait, and each write answers after its COMMIT.
+ class Store
+   POST_JSON = "json_object('id',p.id,'body',p.body,'created_at',p.created_at,'author',u.username," \
+               "'like_count',(SELECT count(*) FROM likes l WHERE l.post_id=p.id))"
+-  FEED = "SELECT '{\"posts\":['||coalesce(group_concat(doc,',' ORDER BY created_at DESC,id DESC),'')||']}' " \
+-         "FROM (SELECT #{POST_JSON} AS doc,p.created_at,p.id FROM posts p JOIN users u ON u.id=p.user_id " \
++  # No ORDER BY inside group_concat: the subquery's ORDER BY ... LIMIT 20 runs as a co-routine that
++  # hands rows over already sorted, so the aggregate's temp b-tree sorter was pure overhead.
++  FEED = "SELECT '{\"posts\":['||coalesce(group_concat(doc,','),'')||']}' " \
++         "FROM (SELECT #{POST_JSON} AS doc FROM posts p JOIN users u ON u.id=p.user_id " \
+          "ORDER BY p.created_at DESC,p.id DESC LIMIT 20)"
++  # The sorted text: compared against FEED once at boot, and used instead if the plans ever differ.
++  FEED_SORTED = "SELECT '{\"posts\":['||coalesce(group_concat(doc,',' ORDER BY created_at DESC,id DESC),'')||']}' " \
++                "FROM (SELECT #{POST_JSON} AS doc,p.created_at,p.id FROM posts p JOIN users u ON u.id=p.user_id " \
++                "ORDER BY p.created_at DESC,p.id DESC LIMIT 20)"
+   # `+?`, not `?`: with the join, SQLite's constant propagation makes the plan depend on the bound
+   # id, so every new id would recompile the statement (twice the cost of running it).
+   POST = "SELECT '{\"post\":'||#{POST_JSON}||'}' FROM posts p JOIN users u ON u.id=p.user_id WHERE p.id=+?"
+   CREATE = "INSERT INTO posts(user_id,body) VALUES(?1,?2) RETURNING '{\"post\":'||json_object('id',id," \
+            "'body',body,'created_at',created_at,'author',?3,'like_count',0)||'}'"
+-  LIKE = "INSERT INTO likes(user_id,post_id) SELECT ?1,?2 WHERE EXISTS(SELECT 1 FROM posts WHERE id=?2) " \
+-         "ON CONFLICT(user_id,post_id) DO NOTHING"
++  # The foreign key on likes.post_id (PRAGMA foreign_keys=ON) rejects a like of a missing post.
++  LIKE = "INSERT INTO likes(user_id,post_id) VALUES(?1,?2) ON CONFLICT(user_id,post_id) DO NOTHING"
+   EXISTS = "SELECT 1 FROM posts WHERE id=?"
++  FK_FAILED = "FOREIGN KEY constraint failed"
+ 
+   def initialize(path)
+     @db = Extralite::Database.new(path)
+@@ -44,53 +56,47 @@ class Store
+     @db.execute("PRAGMA synchronous=NORMAL")
+     @db.execute("PRAGMA foreign_keys=ON")
+     @db.execute("PRAGMA wal_autocheckpoint=0") # checkpoints run on a timer, off the commit path
+-    @db.execute("PRAGMA mmap_size=1073741824")
++    # No mmap: a mapped page is re-parsed and looked up in the WAL index on every acquisition,
++    # while a page-cache hit keeps the parsed page. The ~40 MB working set fits the 64 MiB cache.
++    @db.execute("PRAGMA mmap_size=0")
+     @db.execute("PRAGMA cache_size=-65536")
+     @db.execute("PRAGMA temp_store=MEMORY")
+-    @feed = @db.prepare_splat(FEED)
++    @feed = @db.prepare_splat(feed_sql)
+     @post = @db.prepare_splat(POST)
+     @create = @db.prepare_splat(CREATE)
+     @like = @db.prepare_splat(LIKE)
+     @exists = @db.prepare_splat(EXISTS)
+     @ping = @db.prepare_splat("SELECT 1")
+-    @batch = nil
+-    @checkpoint_due = false
++    @begin = @db.prepare("BEGIN IMMEDIATE")
++    @commit = @db.prepare("COMMIT")
++    @rollback = @db.prepare("ROLLBACK")
++    @pending = [] # [operation, slot] pairs waiting for the next flush
++    @commits = 0
+   end
+ 
++  attr_reader :commits # group commits so far, for the pool diagnostics line
++
+   # Every statement is reset as soon as its row is taken: a statement left mid-step keeps its read
+   # transaction open, and while it is open no checkpoint can run.
+   def feed
+     document = @feed.reset.next
+     @feed.reset
+-    @batch&.wait
+     document
+   end
+ 
+   def post(id)
+-    document = @post.reset.bind(id).next
++    document = @post.bind(id).next # Query#bind resets the statement itself
+     @post.reset
+-    @batch&.wait
+     document
+   end
+ 
+   def create(user_id, username, body)
+-    batch = begin_batch
+-    document = @create.reset.bind(user_id, body, username).next
+-    @create.reset
+-    batch.wait
+-    document
++    enqueue([:create, user_id, body, username])
+   end
+ 
+   # Returns :liked, :already_liked or :missing.
+   def like(user_id, post_id)
+-    batch = begin_batch
+-    outcome = if @like.execute(user_id, post_id) == 1 then :liked
+-              elsif @exists.reset.bind(post_id).next then :already_liked
+-              else :missing
+-              end
+-    @exists.reset
+-    batch.wait
+-    outcome
++    enqueue([:like, user_id, post_id])
+   end
+ 
+   def ping
+@@ -99,55 +105,101 @@ class Store
+     ok
+   end
+ 
+-  # Called every second. A checkpoint can't run inside a write batch, so then it runs right after
+-  # that batch commits.
++  # Called every second. A flush never spans a fiber switch, so no write transaction is open here.
+   def checkpoint
+-    if @batch
+-      @checkpoint_due = true
++    @db.execute("PRAGMA wal_checkpoint(PASSIVE)")
++  rescue Extralite::Error => error
++    warn "checkpoint failed: #{error.message}" # retried on the next tick
++  end
++
++  private
++
++  # FEED relies on co-routine delivery order (pinned SQLite 3.54.0), not on an ORDER BY contract.
++  # Checked once at boot, both documents discarded; any difference falls back to the sorted text.
++  def feed_sql
++    if @db.query("EXPLAIN QUERY PLAN #{FEED}").any? { |row| row.values.join.include?("TEMP B-TREE") }
++      warn "feed plan uses a sorter: using sorted FEED"
++      FEED_SORTED
++    elsif @db.query_single_splat(FEED) != @db.query_single_splat(FEED_SORTED)
++      warn "feed plan drift: using sorted FEED"
++      FEED_SORTED
+     else
+-      checkpoint!
++      FEED
+     end
+   end
+ 
+-  private
++  # Queues the operation and yields once, so every write that is ready in this pass queues too. The
++  # first writer to resume flushes the whole queue; the others find their slot already frozen.
++  def enqueue(op)
++    slot = [] # [result] or [nil, error], frozen by the flush that ran it
++    @pending << [op, slot]
++    Fiber.scheduler&.yield # nil before the reactor starts (warm-up): then the flush runs inline
++    flush unless slot.frozen?
++    raise slot[1] if slot[1]
+ 
+-  # Synchronous, so nothing else runs between BEGIN and joining the batch.
+-  def begin_batch
+-    return @batch if @batch
++    slot[0] or raise "write lost: the flush did not run the queued operation"
++  end
+ 
+-    @db.execute("BEGIN IMMEDIATE")
+-    batch = @batch = Async::Promise.new
+-    Async do |task|
+-      task.yield # let every request that is ready in this pass join the batch
+-      commit(batch)
++  # One synchronous transaction for every queued operation; nothing in here may switch fibers (no
++  # logging, no sleeps). A failing statement fails only its own request, a failing BEGIN or COMMIT
++  # fails them all, and the flush never ends with the transaction active or a slot left unfrozen.
++  def flush
++    ops = @pending
++    @pending = []
++    return if ops.empty?
++
++    @begin.execute
++    ops.each do |op, slot|
++      slot[0] = run_op(op)
++    rescue StandardError => error
++      slot[1] = error
+     end
+-    batch
++    @commit.execute
++    @commits += 1
++  rescue StandardError => error
++    ops.each do |_, slot|
++      slot[0] = nil
++      slot[1] ||= error
++    end
++  ensure
++    rollback if @db.transaction_active?
++    ops.each { |_, slot| slot.freeze }
+   end
+ 
+-  def commit(batch)
+-    @batch = nil
+-    begin
+-      @db.execute("COMMIT")
+-    rescue Extralite::Error => error
+-      @db.execute("ROLLBACK") if @db.transaction_active?
+-      return batch.reject(error)
++  def run_op(op)
++    if op[0] == :create
++      document = @create.bind(op[1], op[2], op[3]).next
++      @create.reset
++      document
++    else
++      insert_like(op[1], op[2])
+     end
+-    batch.resolve(true)
+-    checkpoint! if @checkpoint_due
+   end
+ 
+-  def checkpoint!
+-    @checkpoint_due = false
+-    @db.execute("PRAGMA wal_checkpoint(PASSIVE)")
++  # A constraint failure means a missing post or a missing user; only then is the post looked up,
++  # so a missing post answers 404 and a missing user stays an error.
++  def insert_like(user_id, post_id)
++    @like.execute(user_id, post_id) == 1 ? :liked : :already_liked
+   rescue Extralite::Error => error
+-    warn "checkpoint failed: #{error.message}" # retried on the next tick
++    raise error unless error.message.start_with?(FK_FAILED)
++
++    exists = @exists.reset.bind(post_id).next
++    @exists.reset
++    exists ? raise(error) : :missing
++  end
++
++  # Must not raise: the transaction may not outlive the flush, whatever failed.
++  def rollback
++    @rollback.execute
++  rescue StandardError
++    nil
+   end
+ end
+ 
+ # The API: routes a parsed request and returns [status, json_document]. Transport-free.
+ class App
+   HS256_HEADER = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" # {"alg":"HS256","typ":"JWT"}
+-  BASE64URL = /\A[A-Za-z0-9_-]+\z/
++  NOT_BASE64URL = /[+\/=]/ # the strict decoder rejects every other byte outside the alphabet
+   POSTS_PREFIX = "/posts/"
+   LIKE_SUFFIX = "/like"
+   POSITIVE_ID = /\A[0-9]+\z/
+@@ -186,7 +238,15 @@ class App
+     @key = secret.b.ljust(32, "\0") # HMAC zero-pads keys up to the block size: same MAC
+     raise ArgumentError, "JWT_SECRET longer than 32 bytes is not supported" if @key.bytesize > 32
+ 
+-    @mac = String.new("\0" * 32, encoding: Encoding::BINARY)
++    # The keyed HMAC state (the secret's inner and outer pads) is computed once and every
++    # verification starts from a copy of it. It derives from JWT_SECRET alone: no token is kept.
++    size = Sodium.crypto_auth_hmacsha256_statebytes
++    template = FFI::MemoryPointer.new(size)
++    raise "crypto_auth_hmacsha256_init failed" unless Sodium.crypto_auth_hmacsha256_init(template, @key, @key.bytesize).zero?
++
++    @hmac_template = template.get_bytes(0, size)
++    @hmac_state = FFI::MemoryPointer.new(size)
++    @mac = FFI::MemoryPointer.new(32)
+     @started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+   end
+ 
+@@ -245,7 +305,11 @@ class App
+     body = payload["body"] if payload.is_a?(Hash)
+     raise Halt.new(400, BODY_REQUIRED) unless body.is_a?(String)
+ 
+-    body = body.gsub(TRIM, "")
++    # Printable ASCII at both ends proves there is nothing to trim: every character in SPACE is
++    # ASCII below 0x21 or a multibyte sequence (first byte >= 0xC2, last byte 0x80-0xBF).
++    first = body.getbyte(0)
++    last = body.getbyte(-1)
++    body = body.gsub(TRIM, "") unless first && first.between?(0x21, 0x7E) && last.between?(0x21, 0x7E)
+     raise Halt.new(400, BODY_REQUIRED) if body.empty?
+     raise Halt.new(400, BODY_TOO_LONG) if body.length > 500
+ 
+@@ -274,29 +338,28 @@ class App
+   def authenticate(header)
+     raise Halt.new(401, MISSING_TOKEN) unless header&.start_with?("Bearer ")
+ 
+-    token = header.byteslice(7, header.bytesize - 7)
+-    first = token.index(".")
+-    last = token.rindex(".")
+-    raise Halt.new(401, INVALID_TOKEN) unless first && first != last
++    first = header.byteindex(".", 7)
++    last = header.byterindex(".")
++    raise Halt.new(401, INVALID_TOKEN) unless first && first != last && header.bytesize - last - 1 == 43
++    raise Halt.new(401, INVALID_TOKEN) if header.match?(NOT_BASE64URL, 7)
+ 
+-    head = token.byteslice(0, first)
+-    payload = token.byteslice(first + 1, last - first - 1)
+-    signature = token.byteslice(last + 1, token.bytesize - last - 1)
+-    raise Halt.new(401, INVALID_TOKEN) unless signature.bytesize == 43 && BASE64URL.match?(signature)
+-
+-    signing_input = token.byteslice(0, last).b
+-    Sodium.hmac_sha256(@mac, signing_input, signing_input.bytesize, @key)
+-    raise Halt.new(401, INVALID_TOKEN) unless Sodium.verify32(@mac, decode64(signature))
++    signing_input = header.byteslice(7, last - 7)
++    @hmac_state.put_bytes(0, @hmac_template)
++    Sodium.crypto_auth_hmacsha256_update(@hmac_state, signing_input, signing_input.bytesize)
++    Sodium.crypto_auth_hmacsha256_final(@hmac_state, @mac)
++    signature = decode64(header.byteslice(last + 1, 43))
++    raise Halt.new(401, INVALID_TOKEN) unless signature.bytesize == 32 && Sodium.crypto_verify_32(@mac, signature).zero?
+ 
++    head = header.byteslice(7, first - 7)
+     unless head == HS256_HEADER
+       fields = parse_segment(head)
+       raise Halt.new(401, INVALID_TOKEN) unless fields.is_a?(Hash) && fields["alg"] == "HS256"
+     end
+ 
+-    claims = parse_segment(payload)
++    claims = parse_segment(header.byteslice(first + 1, last - first - 1))
+     raise Halt.new(401, INVALID_TOKEN) unless claims.is_a?(Hash)
+ 
+-    now = Time.now.to_f
++    now = Process.clock_gettime(Process::CLOCK_REALTIME)
+     exp = claims["exp"]
+     raise Halt.new(401, INVALID_TOKEN) unless exp.is_a?(Numeric) && exp > now
+ 
+@@ -314,16 +377,20 @@ class App
+   end
+ 
+   def parse_segment(segment)
+-    raise Halt.new(401, INVALID_TOKEN) unless BASE64URL.match?(segment) && segment.bytesize % 4 != 1
+-
+     CODER.load(decode64(segment)) # a BINARY source is read as UTF-8
+   rescue JSON::ParserError, ArgumentError, EncodingError
+     raise Halt.new(401, INVALID_TOKEN)
+   end
+ 
++  # Strict base64url: the padding follows from the length (1 mod 4 is never valid) and `m0` rejects
++  # any byte outside the alphabet, misplaced padding and non-zero trailing bits.
+   def decode64(segment)
+     padded = segment.tr("-_", "+/")
+-    padded << ("=" * (-segment.bytesize % 4))
++    case segment.bytesize % 4
++    when 2 then padded << "=="
++    when 3 then padded << "="
++    when 1 then raise Halt.new(401, INVALID_TOKEN)
++    end
+     padded.unpack1("m0")
+   rescue ArgumentError
+     raise Halt.new(401, INVALID_TOKEN)
+diff --git a/http.rb b/http.rb
+index 617ed67b6fa1ed66138adc83f6914bb23f1f9153..c8db9c374352af35ab3f6e3c4464068e84c542a2 100644
+--- a/http.rb
++++ b/http.rb
+@@ -12,13 +12,25 @@ require_relative "epoll"
+ # readable through the reactor, and a pool of worker fibers serves the connections that are ready.
+ # A fiber per connection would keep the stack pages each one touched while serving (deep SQLite
+ # calls), which costs ~70 KB per idle connection.
++#
++# Idle workers wait on a LIFO stack and are handed a descriptor directly: the dispatcher pops the
++# most recently parked worker (its stack is still cache-warm) and pushes its fiber onto the
++# reactor's ready queue; the worker parks again by transferring back to the reactor. The pool
++# grows while every worker is busy and a timer trims idle workers beyond WORKERS, so a burst does
++# not leave hundreds of suspended fibers for every minor GC to mark.
++#
++# Close to the descriptor limit, new connections are shed instead: a worker reads their first
++# request directly, answers it with `Connection: close` and closes them, so they never enter epoll.
+ class HTTPServer
+   READ_SIZE = 8192
+   MAX_HEAD = 16 * 1024
+   MAX_BODY = 1024 * 1024
+-  WORKERS = 256
++  WORKERS = 64 # resident workers; idle workers beyond this are trimmed once a second
+   MAX_WORKERS = 4096 # the pool grows past WORKERS only if every worker is busy
++  TRIM_STEP = 32 # at most this many idle workers exit per trim, so a burst's pool drains gradually
+   MAX_EVENTS = 1024
++  MAX_SHED = 2048 # shed connections that may wait for their first request at once
++  SHED_TIMEOUT = 10 # bounds each read or write wait on a shed connection, not the connection as a whole
+ 
+   REASONS = {
+     200 => "OK", 201 => "Created", 400 => "Bad Request", 401 => "Unauthorized", 404 => "Not Found",
+@@ -34,11 +46,14 @@ class HTTPServer
+   CLOSE = heads("connection: close\r\n")
+   END_HEAD = "\r\n\r\n"
+   CRLF = "\r\n"
+-  # The only request headers the API needs. Names are told apart by length. The value is taken
+-  # greedily and trailing blanks are trimmed afterwards: a lazy `[^\r\n]*?` with a lookahead
+-  # backtracks along a 200-byte bearer token and took 5.7 µs on a POST head, against 2.9 µs now.
+-  HEADER = /\r\n(content-length|transfer-encoding|connection|authorization)[ \t]*:[ \t]*([^\r\n]*)/i
+-  TRAILING_BLANKS = /[ \t]+\z/
++  COLON = ":"
++  # The only request headers the API needs. `drain` walks the header lines byte by byte and tells
++  # the names apart by length and first letter before it slices anything, so a GET with Host,
++  # User-Agent and Accept-Encoding allocates nothing for its headers.
++  CONTENT_LENGTH = "content-length"
++  TRANSFER_ENCODING = "transfer-encoding"
++  CONNECTION = "connection"
++  AUTHORIZATION = "authorization"
+   DIGITS = /\A[0-9]+\z/
+   CLOSE_TOKEN = /\bclose\b/i
+   KEEP_ALIVE_TOKEN = /\bkeep-alive\b/i
+@@ -55,20 +70,47 @@ class HTTPServer
+     soft = Process.getrlimit(:NOFILE).first
+     # Last-resort guard: only close to the descriptor limit do responses carry `Connection: close`.
+     @budget = connection_budget || [soft - 256, soft * 9 / 10].max
++    # Within 192 descriptors of the budget, new connections are shed: served once, with
++    # `Connection: close`, and never registered in epoll. Served incumbents stay keep-alive up to
++    # the budget itself.
++    @shed_from = @budget - 192
+     @open = 0
++    @shed_in_flight = 0
+   end
+ 
+   attr_reader :open
+ 
++  # A pooled fiber and the descriptor the dispatcher handed it (nil when it is told to exit).
++  Worker = Struct.new(:fiber, :fd, :io_buffer)
++
++  # Called once a second: evicts the longest-idle workers (the bottom of the stack) beyond WORKERS,
++  # at most TRIM_STEP per call. An evicted worker is woken with no descriptor and exits.
++  def trim_workers
++    surplus = @idle.size - WORKERS
++    return if surplus <= 0
++
++    [surplus, TRIM_STEP].min.times do
++      worker = @idle.shift
++      worker.fd = nil
++      @scheduler.push(worker.fiber)
++    end
++  end
++
++  def stats
++    "workers=#{@workers} idle=#{@idle.size} backlog=#{@backlog.size} open=#{@open}"
++  end
++
+   def run(task)
+     @task = task
++    @scheduler = Fiber.scheduler
+     @epfd = Epoll.create
+     @event = Epoll.event(Epoll::IN | Epoll::RDHUP | Epoll::ET)
+     @sockets = [] # by descriptor
+-    @state = [] # by descriptor: IDLE, BUSY (queued or being served) or AGAIN (busy, and new data came)
++    @state = [] # by descriptor: IDLE, BUSY (queued or being served), AGAIN (busy, and new data came) or SHED
+     @partial = {} # descriptor => bytes of a request that hasn't fully arrived
+-    @ready = Thread::Queue.new
+-    @workers = @waiting = 0
++    @idle = [] # LIFO stack of parked Workers: the most recently parked one serves next
++    @backlog = [] # ready descriptors that found no idle worker while the pool is at MAX_WORKERS
++    @workers = 0
+     WORKERS.times { add_worker }
+     task.async { dispatch }
+     task.async { accept_loop }
+@@ -100,8 +142,26 @@ class HTTPServer
+       @open += 1
+       fd = socket.fileno
+       @sockets[fd] = socket
+-      @state[fd] = IDLE
+-      Epoll.control(@epfd, Epoll::CTL_ADD, fd, @event)
++      if @open > @shed_from && @shed_in_flight < MAX_SHED
++        # Shed: a worker reads its first request directly; IO#timeout bounds that wait and the write.
++        socket.timeout = SHED_TIMEOUT
++        @state[fd] = SHED
++        @shed_in_flight += 1
++        worker = @idle.pop
++        if !worker && @workers < MAX_WORKERS
++          add_worker # runs until it parks, so it is on @idle now; the nil check below is the guard
++          worker = @idle.pop
++        end
++        if worker
++          worker.fd = fd
++          @scheduler.push(worker.fiber)
++        else
++          @backlog.push(fd)
++        end
++      else
++        @state[fd] = IDLE
++        Epoll.control(@epfd, Epoll::CTL_ADD, fd, @event)
++      end
+     rescue Errno::EMFILE, Errno::ENFILE, Errno::ENOBUFS, Errno::ENOMEM
+       sleep 0.01 # out of descriptors: let responses retire connections, then accept again
+     rescue Errno::ECONNABORTED, Errno::EPROTO
+@@ -114,10 +174,12 @@ class HTTPServer
+   IDLE = 0
+   BUSY = 1
+   AGAIN = 2
++  SHED = 3 # not in the epoll set: served once by a worker, then closed
+ 
+-  # Waits (through the reactor) for the epoll set to have ready connections, then queues them.
+-  # A connection that is already queued or being served is only flagged, so one worker serves it
+-  # at a time (requests stay in order) and the worker reads it again before letting it go idle.
++  # Waits (through the reactor) for the epoll set to have ready connections and hands each one to
++  # an idle worker (growing the pool when none is idle), all in the same pass so their writes still
++  # join one group commit. A connection already handed out is only flagged: one worker at a time.
++  # A stale event for a reused descriptor (closed, or now SHED) matches no state and is ignored.
+   def dispatch
+     poller = IO.for_fd(@epfd, autoclose: false)
+     events = Epoll.events(MAX_EVENTS)
+@@ -127,8 +189,17 @@ class HTTPServer
+         case @state[fd]
+         when IDLE
+           @state[fd] = BUSY
+-          @ready.push(fd)
+-          add_worker if @waiting < @ready.size && @workers < MAX_WORKERS
++          worker = @idle.pop
++          if !worker && @workers < MAX_WORKERS
++            add_worker # runs until it parks, so it is on @idle now; the nil check below is the guard
++            worker = @idle.pop
++          end
++          if worker
++            worker.fd = fd
++            @scheduler.push(worker.fiber)
++          else
++            @backlog.push(fd)
++          end
+         when BUSY
+           @state[fd] = AGAIN
+         end
+@@ -141,16 +212,25 @@ class HTTPServer
+     @task.async { work }
+   end
+ 
++  # Serves backlogged descriptors first, otherwise parks on @idle until dispatch sets the worker's
++  # fd and pushes its fiber. Woken with no fd (by trim_workers), the worker leaves the pool.
+   def work
+-    io_buffer = IO::Buffer.new(READ_SIZE)
++    worker = Worker.new(Fiber.current, nil, IO::Buffer.new(READ_SIZE))
+     loop do
+-      @waiting += 1
+-      fd = @ready.pop
+-      @waiting -= 1
+-      service(fd, io_buffer)
+-    rescue StandardError => error
+-      Console.error(self, error)
++      fd = @backlog.shift
++      unless fd
++        worker.fd = nil
++        @idle.push(worker)
++        @scheduler.transfer
++        fd = worker.fd or break
++      end
++      begin
++        service(fd, worker.io_buffer)
++      rescue StandardError => error
++        Console.error(self, error)
++      end
+     end
++    @workers -= 1
+   end
+ 
+   # Edge-triggered: a read shorter than READ_SIZE emptied the socket, and anything that arrives
+@@ -161,11 +241,15 @@ class HTTPServer
+   # used where data is expected: a connection whose new data was already read in an earlier pass
+   # (a stale edge) would hold this worker until its client sends again, which is why the pool can
+   # grow. Re-reads after AGAIN, and reads past a full buffer, don't wait.
++  #
++  # A shed connection comes straight from `accept`, not from epoll: the same first read picks up
++  # its request when it arrives, its one response closes it, and nothing else can wake it.
+   def service(fd, io_buffer)
+     socket = @sockets[fd] or return
++    shed = @state[fd] == SHED
+     wait = true
+     loop do
+-      @state[fd] = BUSY
++      @state[fd] = BUSY unless shed
+       buffer = @partial.delete(fd)
+       loop do
+         data = if wait
+@@ -183,9 +267,13 @@ class HTTPServer
+       end
+ 
+       if buffer
+-        rest = drain(socket, buffer) or return disconnect(fd, socket)
++        rest = drain(socket, buffer, shed) or return disconnect(fd, socket)
+         @partial[fd] = rest unless rest.empty?
+       end
++      if shed # not in epoll: wait here for the rest of the request (IO#timeout bounds the wait)
++        socket.wait_readable
++        next
++      end
+       next if @state[fd] == AGAIN
+ 
+       @state[fd] = IDLE
+@@ -196,6 +284,7 @@ class HTTPServer
+   end
+ 
+   def disconnect(fd, socket)
++    @shed_in_flight -= 1 if @state[fd] == SHED
+     @sockets[fd] = nil
+     @state[fd] = nil
+     @partial.delete(fd)
+@@ -207,7 +296,7 @@ class HTTPServer
+ 
+   # Answers every complete request in `buffer`, in order. Returns the unconsumed tail (possibly
+   # empty), or nil when the connection must be closed.
+-  def drain(socket, buffer)
++  def drain(socket, buffer, shed = false)
+     position = 0
+     size = buffer.bytesize
+     while position < size
+@@ -235,26 +324,47 @@ class HTTPServer
+       length = 0
+       authorization = nil
+       close = http10
+-      if line_end < head_end
+-        buffer.byteslice(line_end, head_end - line_end).scan(HEADER) do
+-          name = Regexp.last_match(1)
+-          value = Regexp.last_match(2)
+-          value = value.sub(TRAILING_BLANKS, "") if value.end_with?(" ", "\t")
+-          case name.bytesize
+-          when 14 # content-length
+-            return reject(socket, 400) unless DIGITS.match?(value)
+-
+-            length = value.to_i
+-          when 17 # transfer-encoding: request bodies must use Content-Length
+-            return reject(socket, 411)
+-          when 10 # connection
+-            if CLOSE_TOKEN.match?(value) then close = true
+-            elsif http10 && KEEP_ALIVE_TOKEN.match?(value) then close = false
++      pos = line_end + 2
++      colon = -1
++      while pos < head_end
++        eol = buffer.byteindex(CRLF, pos)
++        # The colon found is reused until the lines catch up with it; when none is left, head_end
++        # stands in, so one drain scans the buffer for a colon at most once.
++        colon = buffer.byteindex(COLON, pos) || head_end if colon < pos
++        if colon < eol
++          name_end = colon
++          name_end -= 1 while name_end > pos && ((b = buffer.getbyte(name_end - 1)) == 32 || b == 9)
++          name_len = name_end - pos
++          letter = buffer.getbyte(pos) | 0x20
++          if (name_len == 14 && letter == 0x63) || (name_len == 17 && letter == 0x74) ||
++             (name_len == 10 && letter == 0x63) || (name_len == 13 && letter == 0x61)
++            v0 = colon + 1
++            v0 += 1 while v0 < eol && ((b = buffer.getbyte(v0)) == 32 || b == 9)
++            v1 = eol
++            v1 -= 1 while v1 > v0 && ((b = buffer.getbyte(v1 - 1)) == 32 || b == 9)
++            value = buffer.byteslice(v0, v1 - v0)
++            name = buffer.byteslice(pos, name_len)
++            case name_len
++            when 14 # content-length
++              if name.casecmp?(CONTENT_LENGTH)
++                return reject(socket, 400) unless DIGITS.match?(value)
++
++                length = value.to_i
++              end
++            when 17 # transfer-encoding: request bodies must use Content-Length
++              return reject(socket, 411) if name.casecmp?(TRANSFER_ENCODING)
++            when 10 # connection
++              if name.casecmp?(CONNECTION)
++                if CLOSE_TOKEN.match?(value) then close = true
++                elsif http10 && KEEP_ALIVE_TOKEN.match?(value) then close = false
++                end
++              end
++            else # authorization
++              authorization = value if name.casecmp?(AUTHORIZATION)
+             end
+-          else # authorization
+-            authorization = value
+           end
+         end
++        pos = eol + 2
+       end
+       return reject(socket, 413) if length > MAX_BODY
+ 
+@@ -263,7 +373,7 @@ class HTTPServer
+ 
+       body = buffer.byteslice(body_start, length) if length.positive?
+       status, document = @app.call(method, path, authorization, body)
+-      close ||= @open > @budget
++      close ||= shed || @open > @budget
+       respond(socket, close ? CLOSE : (http10 ? KEEP_10 : KEEP), status, document)
+       return nil if close
+ 
+@@ -281,15 +391,21 @@ class HTTPServer
+     nil
+   end
+ 
++  # One interpolation: `String.new` with a keyword argument cost two extra allocations per response.
+   def respond(socket, heads, status, document)
+-    head = heads[status] || heads[500]
+-    out = String.new(head, capacity: head.bytesize + 8 + document.bytesize)
+-    out << document.bytesize.to_s << END_HEAD << document
+-    write(socket, out)
++    write(socket, "#{heads[status] || heads[500]}#{document.bytesize}\r\n\r\n#{document}",
++          heads.equal?(CLOSE))
+   end
+ 
+   # Through the fiber scheduler: with io_uring, every worker's write is queued and submitted together.
+-  def write(socket, data)
+-    socket.write(data)
++  # A connection's last response is sent with MSG_MORE and `shutdown` raises the FIN with the held
++  # segment; `close` alone would reset the connection and discard it while unread input is queued.
++  def write(socket, data, last = false)
++    return socket.write(data) unless last
++
++    size = data.bytesize
++    sent = socket.send(data, Socket::MSG_MORE)
++    sent += socket.send(data.byteslice(sent, size - sent), Socket::MSG_MORE) while sent < size
++    socket.shutdown(Socket::SHUT_WR)
+   end
+ end
+diff --git a/server.rb b/server.rb
+index b011fefdc2451ae93dd2c02a14b719e14085394d..74717ebf9e85b82949de36da7583e0f7649adc73 100644
+--- a/server.rb
++++ b/server.rb
+@@ -31,9 +31,15 @@ Process.warmup if Process.respond_to?(:warmup)
+ 
+ Async do |task|
+   task.async do
++    tick = 0
+     loop do
+       sleep 1
+       store.checkpoint
++      server.trim_workers
++      tick += 1
++      next unless (tick % 10).zero?
++
++      $stderr.puts "pool #{server.stats} commits=#{store.commits} minor_gc=#{GC.stat(:minor_gc_count)} gc_ms=#{GC.stat(:time)}"
+     end
+   end
+ 
