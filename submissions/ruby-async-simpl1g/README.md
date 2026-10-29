@@ -1,0 +1,278 @@
+# Ruby + Async
+
+Based on [ruby-async-cicloid](../ruby-async-cicloid) (PR #71), the best Ruby entry. What changed against it,
+and how it was measured, is under [Changes against ruby-async-cicloid](#changes-against-ruby-async-cicloid).
+
+| | |
+|---|---|
+| Language | Ruby 4.0.7 with YJIT, built from source with jemalloc and `-march=native` |
+| Framework | [async](https://github.com/socketry/async) 2.46.0 reactor on io-event 1.22.1 (io_uring selector, epoll fallback); the HTTP/1.1 layer is our own (`http.rb`, `epoll.rb`) |
+| SQLite driver | extralite 3.1.3, statically linked to SQLite 3.54.0, built from the amalgamation with profile-guided optimization |
+| JWT | HMAC-SHA256 from libsodium 1.0.22, called through rbnacl 7.1.2's FFI bindings |
+| JSON | built by SQLite (`json_object`); json 3.1.0 parses request bodies and JWT claims through one prebuilt `JSON::Coder` |
+| **Nginx or direct** | **Direct**: serves `0.0.0.0:80` itself |
+
+Ruby, SQLite and libsodium are downloaded at pinned versions and checked against their SHA-256 sums.
+Every gem, transitive ones included, is pinned with checksums in `Gemfile.lock`.
+
+## Running it
+
+```bash
+sudo bash install.sh   # apt build deps, then Ruby, SQLite and libsodium from source (~10 min on 1 vCPU)
+bash build.sh          # gems into vendor/bundle
+SQLITE_PATH=... JWT_SECRET=... HOST=0.0.0.0 PORT=80 bash start.sh
+```
+
+## Optimizations, and why
+
+The first version ran on Falcon. Under load, its fiber per connection and the objects async-http
+keeps for each one cost about 40 KB per connection, and garbage collection had to scan all of that.
+At 20k connections each GC paused for about 150 ms, and that pause set the latency floor. This
+version keeps the Async reactor and replaces the HTTP server.
+
+- **Idle connections own no fiber.** An idle keep-alive connection sits in a kernel epoll set and
+  owns no Ruby fiber. Each connection is registered once, edge-triggered, so there is no `epoll_ctl`
+  per request. One Async task waits on that epoll descriptor through the reactor. A pool of 64
+  resident worker fibers (it grows, up to 4096, only when every worker is busy, and is trimmed back
+  once a second) reads each ready connection, answers every complete request in its buffer in
+  order, and writes each response with one `write`.
+  Memory is about 3–5 KB per connection (about 130 MB at 40k), and GC drops from about 4 s to about
+  0.15 s per minute.
+- **Worker hand-off: a LIFO stack and direct scheduler pushes.** Idle workers used to block on a
+  `Thread::Queue#pop` (the fiber scheduler's `block`/`unblock` under the hood) and were woken in
+  FIFO order. Now an idle worker parks itself on a plain array used as a stack and transfers back
+  to the reactor; the dispatcher pops the most recently parked worker, whose stack pages are still
+  cache-warm, sets its descriptor and pushes its fiber straight onto the reactor's ready queue
+  (`Fiber.scheduler.push`). Every ready descriptor of an epoll pass gets its own push in that pass,
+  so all of a pass's workers are runnable together and the group-commit batch is the same as
+  before. When no worker is idle the pool grows (to at most 4096; past that, descriptors wait in a
+  backlog that returning workers drain first). Once a second, the longest-idle workers beyond the
+  64 resident ones, the bottom of the stack, are woken without a descriptor and exit, at most 32
+  per tick, so a burst's pool drains over a few seconds instead of thrashing, and a suspended
+  fiber that is no longer needed stops being a root for every minor GC to mark (about 1.2 µs per
+  suspended fiber per minor GC). Every 10 s the server prints one `pool ...` line on stderr with
+  the pool size, idle and backlogged counts, open connections, group commits and GC counters.
+  Expected effect: small. The hand-off itself is about 0.3 µs per request cheaper than
+  `Thread::Queue` (0.6 vs 0.8–1.0 µs per job in a micro-benchmark), the GC and locality effects
+  are below 1% of CPU, and RSS at 80k users drops by 1–2%.
+- **A minimal HTTP/1.1 parser.** It reads the request line and the four headers the API uses:
+  `Content-Length`, `Transfer-Encoding`, `Connection` and `Authorization`. It supports keep-alive,
+  pipelining, partial reads, HTTP/1.0 and `Connection: close`. Chunked request bodies get a 411.
+  Response heads are prebuilt frozen strings, and each response is assembled with one string
+  interpolation (`String.new(capacity:)` cost two extra allocations per response). The header
+  lines are walked byte by byte with `byteindex`: a name is matched by length and first letter
+  before anything is sliced, so a GET carrying `Host`, `User-Agent` and `Accept-Encoding` allocates
+  nothing for its headers, and a POST head with a 200-byte bearer token takes about 1 µs against
+  6 µs for the regex scan it replaces (18 objects down to 9). Names are case-insensitive, blanks
+  before the colon and around the value are ignored, and lines without a colon are skipped. The
+  colon search is memoized across lines, so a head made of colon-less lines in front of a large
+  body scans the buffer once. A bare CR or LF inside a header line is now rejected (the whole line
+  is the value, so such a `Content-Length` gets a 400) where the regex silently cut the value
+  short; that is the RFC 9112 reading, and no HTTP client sends one.
+- **YJIT is warm before the first request.** `start.sh` sets `--yjit-call-threshold=5` (default 30),
+  and at startup the server runs the feed, a single post, a JWT verification with a body parse, and a
+  like with an invalid id 50 times each through its own parser and app over a socket pair, so the
+  whole request path is compiled before it listens. Nothing is written: the body fails validation
+  after it is parsed. About 140 iseqs are compiled by the time the "listening" line prints, and the
+  first real requests don't pay for compilation. The warm-up token is signed with libsodium, which is
+  loaded anyway; loading `openssl` for it cost 8 MB of RSS, and 300 iterations instead of 50 left
+  another 27 MB of garbage resident. Idle RSS is 36 MB either way now.
+- **io_uring for socket reads and writes.** io-event picks io_uring on the droplet's kernel. Reads
+  and writes go through the fiber scheduler, so io_uring submits them in batches instead of one
+  syscall each. Together with edge-triggered epoll, that cut CPU at 40k users from about 46% to 40%
+  on our test VM.
+- **SQLite builds every response.** `json_object` and `group_concat` produce the exact response bytes,
+  so Ruby never allocates a hash per row or serializes JSON on reads. All statements are prepared once.
+  The single-post query binds its id as `p.id=+?`: with a plain `?` in that join, SQLite treated the
+  plan as depending on the bound value and recompiled the statement on every request. The `+` keeps
+  the same plan and output and halves that query's time (14 to 7 µs).
+- **The feed aggregates without a sorter.** `/feed` is `group_concat` over a 20-row subquery that
+  already runs `ORDER BY created_at DESC, id DESC LIMIT 20` as a co-routine on
+  `posts_created_at_id_idx`. The earlier text repeated that `ORDER BY` inside `group_concat`, and
+  SQLite served it with a temp b-tree (`USE TEMP B-TREE FOR group_concat(ORDER BY)`): every feed
+  re-sorted 20 rows it had just received in order. Without it the plan is the same co-routine, 59
+  VDBE opcodes instead of 71, and the feed statement costs about 23 µs instead of 32 (feeds are 46%
+  of requests). The bytes are identical: ties on `created_at` are still broken by `id DESC` inside
+  the subquery, and an empty table still yields `{"posts":[]}`. SQLite documents `group_concat`
+  order as arbitrary without `ORDER BY`, so this relies on the co-routine delivery order of the
+  pinned SQLite 3.54.0 build and is enforced at boot: `Store#initialize` runs the new and the old
+  (sorted) text once, compares the documents and checks `EXPLAIN QUERY PLAN` for a temp b-tree; if
+  either check fails it warns and prepares the sorted text instead. Both boot documents are
+  discarded; nothing is cached across requests.
+- **Group commit as one deferred flush.** A write only queues its statement and yields once, so every
+  write that is ready in the same reactor pass queues too. The first writer back from its yield runs
+  the whole queue inside one `BEGIN IMMEDIATE ... COMMIT`, synchronously, and each write answers only
+  after that `COMMIT` has returned. That gives one WAL append per batch instead of one per write, with
+  no task, fiber or promise per batch. No transaction is ever open across a fiber switch, so reads
+  never see uncommitted rows and never wait for a batch.
+- **Pragmas**: `locking_mode=EXCLUSIVE`, so the WAL index lives in heap memory rather than the `-shm`
+  file; `journal_mode=WAL`; `synchronous=NORMAL` (rule 6); `wal_autocheckpoint=0`, with a passive
+  checkpoint every second, off the commit path. Every statement is reset as soon as its row has been read, because a statement left mid-step holds a read transaction and blocks checkpoints. Before that fix the WAL grew past 300 MB under load, and WAL lookups (`walFindFrame`) took 30% of the CPU. `mmap_size=0` with a 64 MiB page cache (`cache_size=-65536`): pages are served from
+  SQLite's own page cache rather than a 1 GiB `mmap`. A memory-mapped page is not retained in the page
+  cache, so every acquisition re-parses it (`btreeInitPage`) and looks it up in the WAL index again,
+  while a page-cache hit returns the already-parsed page. The load test's working set (hot feed pages
+  plus the `likes` and `posts` index leaves it touches, ~40 MB) fits the cache, so nothing is evicted,
+  and RSS is lower than with the mapping because only the working set is held.
+- **SQLite compiled for this workload.** It's a static library built with sqlite.org's recommended
+  options (`DQS=0`, `DEFAULT_MEMSTATUS=0`, `OMIT_DEPRECATED`, `OMIT_SHARED_CACHE`, `USE_ALLOCA`, and so
+  on). It's then profile-guided: `sqlite_train.c` runs the server's own statements in the load test's
+  mix against a synthetic database, and the final build uses that profile. That made reads about 7%
+  faster.
+- **One thread, and SQLite never releases the GVL.** Every query is an index lookup that takes
+  microseconds, so releasing and reacquiring the GVL would cost more than it saves.
+- **JWT verified on every request**, with no caching (rule 5). The keyed HMAC-SHA256 state (the
+  secret's inner and outer pads, 208 bytes) is computed once at startup from `JWT_SECRET`; each
+  verification copies it and runs libsodium's `update` and `final` over the signing input, 1.1 µs
+  against 1.6 µs for the one-shot call (3.5 µs through OpenSSL's HMAC in Ruby). Every token's MAC
+  is computed and compared in constant time with `crypto_verify_32`. The token is checked once for
+  characters outside the base64url alphabet (`+`, `/`, `=`), and the strict decoder
+  (`unpack1("m0")`) rejects everything else the previous per-segment regex did, so the 43-character
+  signature always decodes to exactly 32 bytes. The standard `{"alg":"HS256","typ":"JWT"}` header
+  is compared as a string, and any other header is parsed and must say `HS256`. `exp`, `nbf`, `sub`
+  and `username` are checked.
+- **Trimming a post body skips the regex when it can.** Every character in JavaScript's
+  `String#trim` set is ASCII below 0x21 or a multibyte sequence, so a body whose first and last
+  bytes are printable ASCII has nothing to trim and the `gsub` (11.5 µs on a 500-character body) is
+  skipped. The single-post lookup also drops a redundant `reset`: extralite's `Query#bind` resets
+  the statement itself (the reset after the row is read stays, so no read transaction outlives it).
+- **Likes in one statement**: `INSERT ... VALUES ... ON CONFLICT DO NOTHING`; one changed row means
+  "liked", none means "already liked". The foreign key on `likes.post_id` (`foreign_keys=ON`) rejects a
+  like of a missing post, and only on that constraint error does a post-existence check run, to tell a
+  missing post (404) from a missing user (500).
+- **Direct instead of Nginx.** On one core, Nginx's CPU comes out of Ruby's budget, and the provided
+  `nginx.conf` caps out near 16k connections. Responses switch to `Connection: close` only within 256
+  descriptors of the process's file limit, so clients aren't forced to reconnect under normal load.
+  Within 192 descriptors below that budget, a new connection is served once with `Connection: close`
+  straight from `accept` and never enters the epoll set.
+- **TCP_NODELAY is set on the listener** and inherited by accepted sockets on Linux, so there is
+  no `setsockopt` per connection.
+
+## Results on a 1-vCPU test VM
+
+These ran on a Proxmox VM: 1 dedicated Zen 3 vCPU, 2 GB RAM, Ubuntu 24.04, io_uring. Load came from a
+separate 8-vCPU VM running the C connection generator from PR #14 (8 processes, 60 s ramp, 120 s
+hold, the `bench/load.js` request mix). That vCPU is roughly twice as fast as the droplet's, so the
+numbers are relative. Other entries ran on the same VM, built with their own scripts. CPU is the whole
+VM, and p95/p99 are the worst across the generator processes.
+
+| Server (droplet score in the video) | 14k users | 25k users | 40k users |
+|---|---|---|---|
+| **This server** | not rerun (22%, 125 MB, 1 / 4 ms before the io_uring changes) | 27%, 117 MB, 2 / 10 ms | 40%, 130 MB, 6 / 28 ms |
+| Python + Granian, PR #41 (not in the video) | 31%, 267 MB, 2 / 13 ms | 47%, 428 MB, 5 / 26 ms | 70%, 661 MB, 169 / 1,660 ms |
+| Go net/http, PR #18 (22k) | 23%, 461 MB, 1 / 7 ms | 59%, 536 MB, 7 / 23 ms | 93%, 578 MB, 194 / 1,718 ms |
+| Python lean FastAPI, PR #10 (22k) | 34%, 188 MB, 2 / 6 ms | 58%, 289 MB, 10 / 149 ms | 88%, 421 MB, 370 / 2,887 ms |
+| Python FastAPI, PR #1 (11k) | 48%, 232 MB, 3 / 14 ms | 80%, 367 MB, 82 / 1,436 ms | 99%, 12k failed requests |
+
+At 40k users, the generator itself ran up to 1 s late, which inflates every p99 in that column
+(about 0.3 s for this server's run). At 60k users this server used 56% CPU and 166 MB with no
+errors; the generator lagged too much there for its latencies to mean anything.
+
+### What we tried and reverted: serving a new connection's first request from the accept loop
+
+PR #41's benchmark found that past the 65,535-descriptor limit every request arrives on a fresh
+connection, and there our CPU per request rose from 50 to 69 µs while PR #84 (PyPy, raw epoll)
+stayed at 51. PR #84 sets `TCP_DEFER_ACCEPT`, reads the first request right after `accept`, and
+closes a retiring connection without ever registering it in epoll. We implemented the same (queued
+to a worker with its bytes, registered in epoll only once idle) and measured it paired against this
+tree, on the same two VMs with the target capped at half a core, the C generator at 60 s ramp and
+120 s hold, CPU per request being the server process's `utime+stime` over the run divided by requests:
+
+| Regime | before | with the accept path |
+|---|---|---|
+| 40,000 users, keep-alive | 119.0 µs/req, p99 268 ms | 114.7 µs/req, p99 117 ms |
+| 20,000 users, file limit 8,192 (72% of requests reconnect, ~1,000 connects/s) | 209.7 µs/req | 202.3 µs/req |
+| 512 clients reconnecting with no think time (~2,300 connects/s, core saturated) | 391 µs/req | 441 µs/req |
+| 40,000 users, file limit 8,192 (~2,100 connects/s, overloaded) | fails, 3,114 errors | fails, 13,659 errors |
+
+It wins 3–4% at moderate reconnect rates and loses 13% once the core is saturated by reconnects,
+which is the regime it was meant for. Perf put the difference in user space: SQLite's share of
+samples rose from 18% to 22% of a larger total, so the same feed query costs more when served in
+smaller batches straight from the accept loop than in the cache-hot runs the epoll pass delivers.
+`TCP_DEFER_ACCEPT` alone cost 6% in that regime. Two side findings are worth keeping: `TCP_NODELAY` is
+inherited from the listener (kept), and a `read_nonblock` on a Ruby socket allocates a 4 KB IO buffer that
+lives as long as the connection (`recv_nonblock` doesn't); the scheduler's `io_read` with an
+`IO::Buffer` avoids it, which is why memory per connection stays at 3–5 KB.
+
+A perf profile at 40k users: 40% of samples in the kernel (TCP transmit, virtio), about 15% in
+SQLite, 1.3% in the regex engine, and only 15k `epoll_wait` calls against 84k requests in 20 s, so
+moving the idle set from epoll to io_uring multishot polls would save a few percent at most and
+needs a C extension; not done.
+
+### k6 with the unmodified `bench/load.js`
+
+Same VMs, 60 s ramp and a 2 min hold (the load VM was raised to 16 GB for the runs above 30k VUs).
+Uncapped, at 25k VUs: p95 1.3 ms, p99 10.7 ms, 0 failed of 458,135 requests.
+
+To approximate the droplet's slower core, we capped the target VM at half a core (a CFS quota of
+5 ms per 10 ms) and ran the official protocol: 60 s ramp, then a 5-minute hold. k6 was split across
+three load VMs (8, 2 and 2 vCPUs) with execution segments, so the generators stayed over 80% idle:
+
+| VUs | p95 | p99 | Failed | CPU per request | Peak RSS | Thresholds |
+|---|---|---|---|---|---|---|
+| 45,000 | 38 ms | 105 ms | 0% | 154 µs | 179 MB | pass |
+| 48,000 | 110 ms | 993 ms | 0% | 156 µs | 199 MB | pass |
+| 51,000 | 204 ms | 567 ms | 0% | 157 µs | 212 MB | pass |
+| 54,000 | 406 ms | 841 ms | 0% | 156 µs | 235 MB | pass |
+| 57,000 | 1.57 s | 1.87 s | 0% | 174 µs | 278 MB | fail (p95, p99) |
+| 60,000 | 2.41 s | 2.59 s | 0% | 180 µs | 279 MB | fail (p95, p99) |
+
+The latency comes from the server: its half core had no idle time, while all three load VMs reported
+the same percentiles. Past the knee each request costs more CPU (156 → 180 µs), so the queue never
+drains. Near the knee single runs vary; other runs of this tree failed at 46k–48k. A half-core cap is
+only a stand-in for a droplet vCPU, so treat 54k as an estimate, not a score.
+
+With the cap lifted (one full core), the same protocol passes the video's largest test easily:
+
+| VUs | p95 | p99 | Failed | CPU per request | Peak RSS | Thresholds |
+|---|---|---|---|---|---|---|
+| 60,000 | 12 ms | 35 ms | 0% | 112 µs | 184 MB | pass |
+| 64,000 | 17 ms | 39 ms | 0% | 113 µs | 188 MB | pass |
+
+Test suite: 42/42 on x86_64.
+
+## Trade-offs
+
+- Linux only, because epoll is bound through FFI.
+- No idle timeout. Connections stay open until the client closes them, and the descriptor guard
+  covers the extreme case. A worker that picks up a stale edge-triggered event waits on that
+  connection until the client sends or closes; the growable pool keeps that from starving others.
+- Reads call io-event's scheduler `io_read` directly with an `IO::Buffer`, which Ruby still marks
+  experimental (it prints a warning at startup). On an epoll-only kernel it still works, unbatched.
+- The parser covers what this API needs: no chunked request bodies and no `Expect: 100-continue`.
+
+## Changes against ruby-async-cicloid
+
+The sections above from "Results on a 1-vCPU test VM" to "Trade-offs" are cicloid's measurements of the
+original tree. This tree changes `app.rb`, `http.rb` and `server.rb` only; the toolchain, gems, schema
+and build are unchanged.
+
+- `/feed` without the `group_concat` sorter, checked at boot (see "The feed aggregates without a sorter").
+- Group commit as one synchronous deferred flush, and likes as one `INSERT ... VALUES` guarded by the
+  foreign key.
+- The byte-wise header walker and one interpolation per response.
+- The LIFO worker stack with direct scheduler pushes and the once-a-second idle trim.
+- `mmap_size=0` with a 64 MiB page cache.
+- Shed at accept: near the descriptor budget a newcomer is answered once with `Connection: close` and
+  closed, never parked in epoll. A connection's last response is sent with `MSG_MORE` and followed by
+  `shutdown(SHUT_WR)`, so the FIN rides on the held segment and a later `close` with unread input
+  cannot reset the response away.
+
+Measured locally on one pinned vCPU with 2 GB, both images under identical load at the same time and
+each comparison repeated with the seats swapped. CPU per request is server `utime+stime` over requests:
+
+| Users | ruby-async-cicloid | This tree | CPU per request |
+|---|---|---|---|
+| 20,000 | pass | pass | -23.8 % |
+| 80,000 | pass | pass | -27.7 % |
+| 187,500 | fail, p95 1.6 s | pass, p95 19 ms, p99 43 ms | -46.7 % (original saturated) |
+| 230,000 | not run | pass, p99 85 ms | |
+| 280,000 | not run | fail, p99 3.7 s | |
+
+The original passes 150,000 and fails 187,500 locally; this tree passes 230,000 and fails 280,000. The
+local harness is a stand-in for the droplet, so these are relative numbers, not a score. The 20,000
+pair ran this code without the `shutdown` line, whose path never runs at that load. `test/test.sh`
+passes 42/42.
+
+## License
+
+MIT, under the repo's [license](../../LICENSE).
